@@ -1,0 +1,2 @@
+# foreshock
+AI Hackathon Repo
