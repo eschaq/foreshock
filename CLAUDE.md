@@ -1,6 +1,8 @@
 # Foreshock — Build Context (CLAUDE.md / Project Knowledge)
 
-> **Purpose of this file:** the single source of truth for building Foreshock. Drop it in the repo root as CLAUDE.md (or /docs) so Claude Code has full context without re-explanation. Also serves as Claude Project knowledge in claude.ai. Last updated: May 24, 2026 (build opens May 25).
+> **Purpose of this file:** the single source of truth for building Foreshock. Drop it in the repo root as CLAUDE.md (or /docs) so Claude Code has full context without re-explanation. Also serves as Claude Project knowledge in claude.ai. Last updated: May 25, 2026 (build day — kickoff done, credits live).
+
+> **CURRENT STATUS (May 25, build open):** Credits distributed in the kickoff stream. Track is chosen AT SUBMISSION, not upfront — build it, then pick the strongest track (working lean: Track 2 Intelligence). Mentors available via @-tag in Discord. Vendor monitoring was named as an example use case in the kickoff: VALIDATION that Foreshock is centered in the theme, but the category is likely crowded, so the differentiation (business-health signals, NOT security scores — the BitSight gap: "the layoff precedes the breach") must be LOUD in the demo narration and the submission's additional-info field. Building in the VS Code Claude Code extension.
 
 ---
 
