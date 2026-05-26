@@ -3,6 +3,7 @@ import { ActivityIndicator } from "./components/ActivityIndicator";
 import { DetailPanel } from "./components/DetailPanel";
 import { FlowPanel } from "./components/FlowPanel";
 import { RiskScale } from "./components/RiskScale";
+import { SettingsGear } from "./components/SettingsGear";
 import { VendorCard } from "./components/VendorCard";
 import { fetchStatus, fetchVendors } from "./lib/api";
 import type { SystemStatus, VendorOverview } from "./types";
@@ -12,6 +13,14 @@ function getTriggerModeFromURL(): "live" | "seeded" {
   return params.get("mode") === "seeded" ? "seeded" : "live";
 }
 
+function writeTriggerModeToURL(mode: "live" | "seeded") {
+  const params = new URLSearchParams(window.location.search);
+  params.set("mode", mode);
+  const newSearch = params.toString();
+  const newUrl = `${window.location.pathname}${newSearch ? "?" + newSearch : ""}${window.location.hash}`;
+  window.history.replaceState({}, "", newUrl);
+}
+
 function App() {
   const [vendors, setVendors] = useState<VendorOverview[]>([]);
   const [status, setStatus] = useState<SystemStatus | null>(null);
@@ -19,7 +28,16 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const [triggerMode] = useState<"live" | "seeded">(getTriggerModeFromURL());
+  const [triggerMode, setTriggerMode] = useState<"live" | "seeded">(
+    getTriggerModeFromURL()
+  );
+
+  // Toggle from the gear; keeps the ?mode= URL in sync so refresh/bookmark
+  // preserves the choice and the URL channel still works.
+  const handleModeChange = useCallback((mode: "live" | "seeded") => {
+    setTriggerMode(mode);
+    writeTriggerModeToURL(mode);
+  }, []);
   const [flowNonce, setFlowNonce] = useState(0);
   const [flowOpen, setFlowOpen] = useState(false);
 
@@ -77,6 +95,11 @@ function App() {
             <span className="text-signal-red">{tally.critical} critical</span>
             <span className="text-signal-amber">{tally.warning} warning</span>
             <span className="text-signal-teal">{tally.stable} stable</span>
+            <SettingsGear
+              mode={triggerMode}
+              onModeChange={handleModeChange}
+              onAfterReset={refresh}
+            />
           </div>
         </div>
         <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between gap-6 flex-wrap">
