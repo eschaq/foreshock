@@ -74,3 +74,28 @@ export interface VendorDetail {
   summary: RiskSummary | null;
   recent_signals: RecentSignal[];
 }
+
+export interface SystemStatus {
+  monitoring_active: boolean;
+  vendor_count: number;
+  signal_count_total: number;
+  last_capture: string | null;
+  live_pull_query: string;
+  live_pull_vendor: string;
+}
+
+// SSE event payloads emitted by /live-pull/stream. The honesty boundary
+// lives here: `mcp_call` / `mcp_result` only appear in live mode;
+// `fixture_read` / `fixture_loaded` only in seeded mode.
+export type FlowEvent =
+  | { type: "start"; mode: "live" | "seeded"; capture_date: string; label: string }
+  | { type: "mcp_call"; tool: string; vendor: string; query: string; status: string; data_path: "bright-data-mcp" }
+  | { type: "mcp_result"; tool: string; vendor: string; results_count: number; duration_ms: number; status: string; data_path: "bright-data-mcp" }
+  | { type: "fixture_read"; fixture: string; label: "cached_replay"; status: string; data_path: "local-disk" }
+  | { type: "fixture_loaded"; fixture: string; label: "cached_replay"; results_count: number; data_path: "local-disk" }
+  | { type: "save_seed"; fixture: string; results_count: number }
+  | { type: "rows_built"; category: "real_vendor" | "veridian_finale"; vendor: string; count: number; metrics: string[]; note?: string }
+  | { type: "airtable_write"; status: "started" | "ok"; row_count?: number; rows_written?: number }
+  | { type: "complete"; mode: "live" | "seeded"; capture_date: string; real_vendor_rows: number; veridian_rows: number; rows_written: number; saved_seed: boolean }
+  | { type: "error"; stage?: string; tool?: string; message: string }
+  | { type: "stream_end" };

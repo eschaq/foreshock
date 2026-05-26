@@ -27,10 +27,11 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Literal
+from typing import AsyncIterator, Literal
 
 from dotenv import load_dotenv
 from mcp import ClientSession
@@ -259,6 +260,164 @@ async def run_live_pull(
         dry_run=(not write),
         saved_seed=(save_seed and mode == "live"),
     )
+
+
+async def stream_live_pull(
+    mode: Literal["live", "seeded"] = "live",
+    write: bool = True,
+    save_seed: bool = False,
+    capture_date: str | None = None,
+) -> AsyncIterator[dict]:
+    """
+    Same orchestration as `run_live_pull`, but yields per-step events for a
+    live UI to render. This is the HONESTY BOUNDARY for the judge-facing
+    MCP flow display:
+
+    - mode="live"    -> emits {type:"mcp_call"} + {type:"mcp_result"} with
+                        the real tool name, vendor, query, results count,
+                        and duration_ms. These are REAL Bright Data calls.
+    - mode="seeded"  -> emits {type:"fixture_read"} + {type:"fixture_loaded"}
+                        labeled `cached_replay`. NEVER fakes an mcp_call event
+                        while reading from disk.
+
+    Frontend just renders whatever events arrive — it cannot lie because the
+    events themselves are honest about the data path.
+    """
+    today = capture_date or date.today().isoformat()
+    yield {
+        "type": "start",
+        "mode": mode,
+        "capture_date": today,
+        "label": (
+            "Bright Data MCP — live capture"
+            if mode == "live"
+            else "Cached replay (network not used)"
+        ),
+    }
+
+    # --- Phase 1: fetch (the only mode-divergent block) ---
+    if mode == "live":
+        yield {
+            "type": "mcp_call",
+            "tool": "search_engine",
+            "vendor": LIVE_PULL_VENDOR["name"],
+            "query": LIVE_PULL_QUERY,
+            "status": "started",
+            "data_path": "bright-data-mcp",
+        }
+        t0 = time.monotonic()
+        try:
+            payload = await _fetch_organic_live()
+        except Exception as e:
+            yield {
+                "type": "error",
+                "stage": "mcp_call",
+                "tool": "search_engine",
+                "message": str(e),
+            }
+            return
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        organic = payload.get("organic", [])
+        yield {
+            "type": "mcp_result",
+            "tool": "search_engine",
+            "vendor": LIVE_PULL_VENDOR["name"],
+            "results_count": len(organic),
+            "duration_ms": elapsed_ms,
+            "status": "ok",
+            "data_path": "bright-data-mcp",
+        }
+    else:
+        yield {
+            "type": "fixture_read",
+            "fixture": FIXTURE_PATH.name,
+            "label": "cached_replay",
+            "status": "started",
+            "data_path": "local-disk",
+        }
+        try:
+            payload = _fetch_organic_seeded()
+        except Exception as e:
+            yield {
+                "type": "error",
+                "stage": "fixture_read",
+                "message": str(e),
+            }
+            return
+        organic = payload.get("organic", [])
+        yield {
+            "type": "fixture_loaded",
+            "fixture": FIXTURE_PATH.name,
+            "label": "cached_replay",
+            "results_count": len(organic),
+            "data_path": "local-disk",
+        }
+
+    if mode == "live" and save_seed:
+        _save_fixture(payload)
+        yield {
+            "type": "save_seed",
+            "fixture": FIXTURE_PATH.name,
+            "results_count": len(organic),
+        }
+
+    # --- Phase 2: build Type 2 rows (same logic both modes) ---
+    real_rows = _real_vendor_rows_from_payload(payload, today)
+    yield {
+        "type": "rows_built",
+        "category": "real_vendor",
+        "vendor": LIVE_PULL_VENDOR["name"],
+        "count": len(real_rows),
+        "metrics": sorted({r["metric"] for r in real_rows}),
+    }
+
+    veridian_rows = _veridian_finale_rows(today)
+    yield {
+        "type": "rows_built",
+        "category": "veridian_finale",
+        "vendor": "Veridian Pay",
+        "count": len(veridian_rows),
+        "metrics": sorted({r["metric"] for r in veridian_rows}),
+        "note": "scripted demo beat — second C-suite exit + lawsuit",
+    }
+
+    # --- Phase 3: write (same both modes) ---
+    all_rows = real_rows + veridian_rows
+    written: list[str] = []
+    if write:
+        yield {
+            "type": "airtable_write",
+            "status": "started",
+            "row_count": len(all_rows),
+        }
+        api = Api(AT_KEY)
+        table = api.table(AT_BASE, TABLE_NAME)
+        try:
+            created = table.batch_create(all_rows, typecast=True)
+            written = [r["id"] for r in created]
+        except Exception as e:
+            yield {
+                "type": "error",
+                "stage": "airtable_write",
+                "message": str(e),
+            }
+            return
+        yield {
+            "type": "airtable_write",
+            "status": "ok",
+            "rows_written": len(written),
+        }
+
+    # Final completion event with the snapshot the UI uses to refresh.
+    yield {
+        "type": "complete",
+        "mode": mode,
+        "capture_date": today,
+        "real_vendor_rows": len(real_rows),
+        "veridian_rows": len(veridian_rows),
+        "rows_written": len(written),
+        "saved_seed": (mode == "live" and save_seed),
+    }
 
 
 def reset_live_pull_rows() -> int:

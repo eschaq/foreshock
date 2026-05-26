@@ -1,4 +1,4 @@
-import type { VendorDetail, VendorOverview } from "../types";
+import type { SystemStatus, VendorDetail, VendorOverview } from "../types";
 
 const BASE = "/api";
 
@@ -17,4 +17,14 @@ export async function fetchVendorDetail(
   const res = await fetch(`${BASE}/vendors/${encodeURIComponent(name)}${qs}`);
   if (!res.ok) throw new Error(`vendor ${name} ${res.status}`);
   return (await res.json()) as VendorDetail;
+}
+
+export async function fetchStatus(): Promise<SystemStatus> {
+  const res = await fetch(`${BASE}/status`);
+  if (!res.ok) throw new Error(`status ${res.status}`);
+  return (await res.json()) as SystemStatus;
+}
+
+export function livePullStreamUrl(mode: "live" | "seeded"): string {
+  return `${BASE}/live-pull/stream?mode=${mode}`;
 }
