@@ -133,9 +133,11 @@ def all_vendors_overview() -> list[dict]:
 # Detail (full payload incl. AI summary, with cache)
 # ---------------------------------------------------------------------------
 
-# Cache keyed by (vendor_name, latest_capture_date) so the summary refreshes
-# when fresh data lands but doesn't re-hit Claude on every click.
-_summary_cache: dict[tuple[str, str | None], dict] = {}
+# Cache keyed by (vendor_name, latest_capture_date, signal_count) so the
+# summary refreshes when fresh data lands (count goes up) AND doesn't re-hit
+# Claude on every click. signal_count in the key is what makes the live pull's
+# new rows auto-invalidate this cache.
+_summary_cache: dict[tuple[str, str | None, int], dict] = {}
 _cache_lock = Lock()
 
 
@@ -182,7 +184,7 @@ def vendor_detail(name: str, force_refresh: bool = False) -> dict:
     risk = score_vendor(name, signals)
     alert = evaluate_alert(risk)
 
-    cache_key = (name, overview["latest_capture"])
+    cache_key = (name, overview["latest_capture"], overview["signal_count"])
     summary_payload: dict | None = None
     if alert is not None:
         with _cache_lock:

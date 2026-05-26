@@ -1,0 +1,45 @@
+{
+  "organic": [
+    {
+      "link": "https://stripe.com/fr/newsroom/news",
+      "title": "Presse Stripe : actualit\u00e9s et communiqu\u00e9s",
+      "description": "20 Jan 2026 \u2014 Consultez l'actualit\u00e9 de Stripe, notamment les communiqu\u00e9s sur l'entreprise et les produits, les rapports de recherche, les ressources des marques, etc."
+    },
+    {
+      "link": "https://stripe.com/en-it/newsroom?__previewId=legalqa74924",
+      "title": "Stripe Newsroom: The Latest News & Announcements",
+      "description": "16 May 2026 \u2014 Read the latest news and information from Stripe, including corporate and product announcements, research reports, brand assets, and more."
+    },
+    {
+      "link": "https://x.com/stripe?lang=en",
+      "title": "Stripe (@stripe) / Posts / X",
+      "description": "Stripe users can accept payments over MPP in a few lines of code using our PaymentIntents API. Businesses can then accept payments directly from agents, in ..."
+    },
+    {
+      "link": "https://www.finextra.com/company-news/3587/stripe",
+      "title": "Stripe - News, Articles & Research",
+      "description": "11 May 2026 \u2014 Stripe \u00b7 AWS targets AI agent payments \u00b7 Stripe brings agentic payments to Google \u00b7 UK FS sector warns of risks from lack of shared AI governance standard."
+    },
+    {
+      "link": "https://fintechnews.sg/130816/payments/stripe-ai/",
+      "title": "Stripe Expands AI Commerce Push With 288 Launches ...",
+      "description": "30 Apr 2026 \u2014 Stripe unveils 288 products and features covering AI commerce, agent payments, token billing, fraud controls and Treasury tools."
+    },
+    {
+      "link": "https://finance.yahoo.com/quote/STRI.PVT/",
+      "title": "Stripe (STRI.PVT) Valuation, History & News",
+      "description": "20 hours ago \u2014 Stripe is a global technology company which provides a financial infrastructure platform intended to accept payments and grow revenue."
+    },
+    {
+      "link": "https://www.youtube.com/watch?v=8F4XyWYqZi8",
+      "title": "Stripe Sessions 2026 keynote in 12 minutes",
+      "description": "Everything Stripe launched at Sessions 2026 in 12 minutes. More information: https://stripesessions.com Full keynote: https://youtube.com/live/e13-s0p1tfE ..."
+    },
+    {
+      "link": "https://news.ycombinator.com/item?id=47532148",
+      "title": "Stripe Projects: Provision and manage services from the CLI",
+      "description": "27 Mar 2026 \u2014 As a developer tool, integrating Stripe Projects felt a lot like adding \"Sign in with Google\" - Stripe acts as a trusted identity and billing provider, but for ..."
+    }
+  ],
+  "current_page": 1
+}
