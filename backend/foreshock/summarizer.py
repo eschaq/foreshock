@@ -257,7 +257,7 @@ def _deterministic_summary(
         sentiment_read = (
             f"Negative across the converging signals "
             f"(neg={neg}, neu={neu}, pos={pos}). Heuristic read only — "
-            f"Claude pass unavailable."
+            f"AI pass unavailable."
         )
     elif neg > pos:
         sentiment_read = (

@@ -59,7 +59,7 @@ export function DetailPanel({ vendorName, onClose }: Props) {
         <div className="p-6 space-y-6">
           {loading && (
             <div className="text-ink-muted text-sm">
-              loading vendor detail and (if needed) generating live Claude
+              loading vendor detail and (if needed) generating live AI
               summary…
             </div>
           )}
@@ -137,7 +137,7 @@ function DetailBody({ detail }: { detail: VendorDetail }) {
         <section>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-ink-muted text-xs uppercase tracking-wider">
-              AI risk summary (Claude · {summary.generated_by})
+              AI risk summary
             </h3>
             <span
               className={`text-[10px] ${

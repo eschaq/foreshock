@@ -196,6 +196,10 @@ def build_diff(
                 diff.deteriorating = diff.pct_trajectory <= -0.02   # >=2% loss
             elif metric == "glassdoor_rating" and diff.numeric_trajectory is not None:
                 diff.deteriorating = diff.numeric_trajectory <= -0.2  # >=0.2 drop
+            elif metric == "open_roles" and diff.pct_trajectory is not None:
+                # Hiring contraction is the signal; flag a meaningful drop only
+                # (5% week-over-week is noise floor; require 10%+ over window).
+                diff.deteriorating = diff.pct_trajectory <= -0.10
 
         # Sentiment metrics — collapse to numeric scale, average over window.
         elif metric in SENTIMENT_METRICS:
@@ -252,12 +256,17 @@ def build_diff(
 # ---------------------------------------------------------------------------
 
 WEIGHTS = {
-    "leadership": 0.30,
-    "legal":      0.25,
-    "headcount":  0.20,
-    "sentiment":  0.15,
-    "news_vol":   0.10,
+    "leadership": 0.30,   # sharpest failure signal
+    "legal":      0.25,   # sharpest failure signal
+    "headcount":  0.17,   # concrete workforce data (was 0.20; ceded 0.03 to its leading-indicator sibling open_roles)
+    "sentiment":  0.15,   # trend amplifier
+    "open_roles": 0.06,   # leading workforce indicator: hiring contraction precedes layoffs
+    "news_vol":   0.07,   # noisiest dimension (was 0.10; ceded 0.03 to open_roles)
 }
+# Sum = 1.00. leadership + legal stay highest per CLAUDE.md §4. open_roles is
+# seated thematically next to headcount: hiring freezes precede layoffs. The
+# 0.06 weight is light enough that open_roles dormancy or noisy data doesn't
+# destabilize the gradation but meaningful enough to register a real freeze.
 
 STABLE_MAX = 30
 WARNING_MAX = 60   # >=60 = critical
@@ -331,6 +340,29 @@ def _headcount_component(diffs: dict[str, MetricDiff]) -> ComponentScore:
                           score * WEIGHTS["headcount"], drivers)
 
 
+def _open_roles_component(diffs: dict[str, MetricDiff]) -> ComponentScore:
+    """
+    Leading-indicator workforce signal. Hiring freezes precede layoffs —
+    a sustained drop in open roles is the early foreshock to headcount
+    contraction. We score downward swings only; upward swings are too
+    noisy to read as risk (could be expansion, restructuring, or backfill).
+    """
+    d = diffs.get("open_roles")
+    score = 0.0
+    drivers: list[str] = []
+    if d and d.pct_trajectory is not None and d.pct_trajectory < 0:
+        pct = d.pct_trajectory
+        # Linear ramp: -10% -> 20, -25% -> 50, -50% -> 100. Below ~5% is noise.
+        score = min(100.0, -pct * 200.0)
+        if score >= 10.0:
+            drivers.append(
+                f"open_roles {d.oldest_value} -> {d.latest_value} "
+                f"({pct*100:+.1f}%) — hiring contraction"
+            )
+    return ComponentScore("open_roles", score, WEIGHTS["open_roles"],
+                          score * WEIGHTS["open_roles"], drivers)
+
+
 def _sentiment_component(diffs: dict[str, MetricDiff]) -> ComponentScore:
     """Combine news_sentiment + sentiment_review + glassdoor_rating drop."""
     parts: list[tuple[float, str]] = []
@@ -397,6 +429,7 @@ def score_vendor(vendor_name: str, signals: list[dict],
         _leadership_component(diffs),
         _legal_component(diffs),
         _headcount_component(diffs),
+        _open_roles_component(diffs),
         _sentiment_component(diffs),
         _news_volume_component(diffs),
     ]
@@ -412,8 +445,9 @@ def score_vendor(vendor_name: str, signals: list[dict],
     # Convergence: how many independent signal types are deteriorating.
     convergence_signals = {
         "leadership_change", "legal_event", "headcount_linkedin",
-        "glassdoor_rating", "news_sentiment", "sentiment_review",
-        "news_volume", "outage_incident", "funding_event",
+        "open_roles", "glassdoor_rating", "news_sentiment",
+        "sentiment_review", "news_volume", "outage_incident",
+        "funding_event",
     }
     convergence_count = sum(
         1 for m, d in diffs.items()

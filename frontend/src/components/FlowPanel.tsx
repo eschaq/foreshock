@@ -2,11 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { livePullStreamUrl } from "../lib/api";
 import type { FlowEvent } from "../types";
 
+type RefreshPhase = "idle" | "refreshing" | "updated";
+
 interface Props {
   triggerNonce: number;        // bump to re-open + restream
   mode: "live" | "seeded";
   onClose: () => void;
-  onComplete: () => void;       // dashboard refreshes vendors after this
+  // Must return a Promise so FlowPanel can await refresh completion and
+  // transition the lifecycle indicator from "refreshing" -> "updated".
+  onComplete: () => Promise<void>;
 }
 
 // The judge-facing MCP-flow display. Renders ONLY whatever events arrive
@@ -16,18 +20,30 @@ interface Props {
 export function FlowPanel({ triggerNonce, mode, onClose, onComplete }: Props) {
   const [events, setEvents] = useState<FlowEvent[]>([]);
   const [streaming, setStreaming] = useState(false);
-  const completedRef = useRef(false);
+  // Tracks the dashboard-refresh lifecycle after the SSE `complete` event.
+  // refreshing -> await fetches -> updated. Drives both the suffix text on
+  // the complete event row and the modal overlay opacity.
+  const [refreshPhase, setRefreshPhase] = useState<RefreshPhase>("idle");
+  // Drops the "updated ✓" confirmation to dim after a couple seconds so
+  // the panel settles visually but the operator can still see what happened.
+  const [confirmFaded, setConfirmFaded] = useState(false);
+  const fadeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (triggerNonce === 0) return;
     setEvents([]);
     setStreaming(true);
-    completedRef.current = false;
+    setRefreshPhase("idle");
+    setConfirmFaded(false);
+    if (fadeTimerRef.current !== null) {
+      window.clearTimeout(fadeTimerRef.current);
+      fadeTimerRef.current = null;
+    }
 
     const url = livePullStreamUrl(mode);
     const es = new EventSource(url);
 
-    es.onmessage = (e) => {
+    es.onmessage = async (e) => {
       let ev: FlowEvent;
       try {
         ev = JSON.parse(e.data);
@@ -41,9 +57,22 @@ export function FlowPanel({ triggerNonce, mode, onClose, onComplete }: Props) {
       }
       setEvents((prev) => [...prev, ev]);
       if (ev.type === "complete") {
-        completedRef.current = true;
-        // Defer refresh so the user sees the complete event first.
-        setTimeout(() => onComplete(), 400);
+        // Wait a beat so the operator sees the "complete" line, then
+        // refresh — awaiting so we know when the new scores have actually
+        // landed in the dashboard state.
+        await new Promise((r) => setTimeout(r, 350));
+        setRefreshPhase("refreshing");
+        try {
+          await onComplete();
+          setRefreshPhase("updated");
+          // Fade the bright "updated ✓" marker to dim after a moment.
+          fadeTimerRef.current = window.setTimeout(() => {
+            setConfirmFaded(true);
+          }, 2500);
+        } catch {
+          // Refresh failed — leave the indicator in a recoverable state.
+          setRefreshPhase("idle");
+        }
       }
     };
 
@@ -52,14 +81,28 @@ export function FlowPanel({ triggerNonce, mode, onClose, onComplete }: Props) {
       setStreaming(false);
     };
 
-    return () => es.close();
+    return () => {
+      es.close();
+      if (fadeTimerRef.current !== null) {
+        window.clearTimeout(fadeTimerRef.current);
+        fadeTimerRef.current = null;
+      }
+    };
   }, [triggerNonce, mode, onComplete]);
 
   if (triggerNonce === 0) return null;
 
+  // Dim the backdrop once the refresh has landed so the vendor cards
+  // behind become clearly visible without the operator having to close
+  // the panel.
+  const overlayClass =
+    refreshPhase === "updated"
+      ? "bg-black/30 transition-colors duration-700"
+      : "bg-black/80 transition-colors duration-300";
+
   return (
     <div
-      className="fixed inset-0 z-40 bg-black/80 flex items-center justify-center p-6"
+      className={`fixed inset-0 z-40 flex items-center justify-center p-6 ${overlayClass}`}
       onClick={onClose}
     >
       <div
@@ -76,7 +119,13 @@ export function FlowPanel({ triggerNonce, mode, onClose, onComplete }: Props) {
             <div className="text-ink-muted italic">opening stream…</div>
           )}
           {events.map((ev, i) => (
-            <EventRow key={i} ev={ev} mode={mode} />
+            <EventRow
+              key={i}
+              ev={ev}
+              mode={mode}
+              refreshPhase={refreshPhase}
+              confirmFaded={confirmFaded}
+            />
           ))}
           {streaming && (
             <div className="text-ink-dim italic animate-pulse">
@@ -157,7 +206,17 @@ function FlowHeader({
   );
 }
 
-function EventRow({ ev, mode }: { ev: FlowEvent; mode: "live" | "seeded" }) {
+function EventRow({
+  ev,
+  mode,
+  refreshPhase,
+  confirmFaded,
+}: {
+  ev: FlowEvent;
+  mode: "live" | "seeded";
+  refreshPhase: RefreshPhase;
+  confirmFaded: boolean;
+}) {
   switch (ev.type) {
     case "start":
       return (
@@ -291,9 +350,11 @@ function EventRow({ ev, mode }: { ev: FlowEvent; mode: "live" | "seeded" }) {
           <span className="text-ink-muted">
             (real_vendor={ev.real_vendor_rows}, veridian_finale={ev.veridian_rows})
           </span>
-          <span className="text-ink-dim italic ml-2">
-            — dashboard refreshing…
-          </span>
+          <RefreshSuffix
+            phase={refreshPhase}
+            faded={confirmFaded}
+            mode={mode}
+          />
         </Line>
       );
 
@@ -344,4 +405,36 @@ function Tag({ children }: { children: React.ReactNode }) {
 
 function Sep() {
   return <span className="text-ink-dim">·</span>;
+}
+
+function RefreshSuffix({
+  phase,
+  faded,
+  mode,
+}: {
+  phase: RefreshPhase;
+  faded: boolean;
+  mode: "live" | "seeded";
+}) {
+  if (phase === "idle") {
+    return <span className="text-ink-dim italic ml-2">— awaiting refresh…</span>;
+  }
+  if (phase === "refreshing") {
+    return (
+      <span className="text-ink-muted italic ml-2 animate-pulse">
+        — refreshing dashboard…
+      </span>
+    );
+  }
+  // updated
+  const accent = mode === "live" ? "text-signal-teal" : "text-signal-amber";
+  return (
+    <span
+      className={`ml-2 font-medium transition-opacity duration-700 ${
+        faded ? "text-ink-dim opacity-70" : accent
+      }`}
+    >
+      — dashboard updated ✓
+    </span>
+  );
 }

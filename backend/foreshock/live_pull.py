@@ -61,8 +61,11 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "seeded_real_pull.json"
 
 # The one fast vendor pull for the live moment. Single search_engine call,
 # 2-4s on a base tool. Real-vendor proof that this works on live companies.
+# Query uses the same disambiguated form as the daily capture (capture.py
+# REAL_VENDORS) so the demo's live moment also filters out look-alike
+# entities like "Stripe Communications" (a different company).
 LIVE_PULL_VENDOR = {"name": "Stripe", "type": "Payments"}
-LIVE_PULL_QUERY = "Stripe news after:2026-01-01"
+LIVE_PULL_QUERY = '"Stripe Inc." news after:2026-01-01'
 
 
 # ---------------------------------------------------------------------------

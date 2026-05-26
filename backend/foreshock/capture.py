@@ -37,34 +37,41 @@ ValidatorFn = Callable[[str, str, str, str], tuple[bool, str]]
 
 
 REAL_VENDORS: list[dict] = [
-    {"name": "Stripe", "type": "Payments"},
-    {"name": "Plaid", "type": "Bank Data"},
-    {"name": "Snowflake", "type": "Data Infra"},
-    {"name": "Twilio", "type": "Comms/2FA"},
-    {"name": "AWS", "type": "Cloud Infra"},
+    # `query_name` is the disambiguated phrase used in Google search to
+    # exclude similarly-named unrelated entities (e.g. "Stripe Communications"
+    # PR agency vs. Stripe Inc. payments). Quoted phrases force exact-match.
+    # `name` is still the stable identifier used everywhere downstream
+    # (Airtable vendor_name, scoring keys, alert payloads, dashboard).
+    {"name": "Stripe",    "type": "Payments",    "query_name": '"Stripe Inc."'},
+    {"name": "Plaid",     "type": "Bank Data",   "query_name": '"Plaid Inc." OR "Plaid Technologies"'},
+    {"name": "Snowflake", "type": "Data Infra",  "query_name": '"Snowflake Inc."'},
+    {"name": "Twilio",    "type": "Comms/2FA",   "query_name": '"Twilio Inc."'},
+    {"name": "AWS",       "type": "Cloud Infra", "query_name": '"Amazon Web Services"'},
 ]
 
 
 # Query templates run against Google via search_engine. Recency operator
 # `after:YYYY-MM-DD` is appended at call time (portable; doesn't depend on
 # a per-tool recency parameter — see test_recency_filter.py).
+# Templates take `{query_name}` (disambiguated phrase) not the bare vendor
+# name — see REAL_VENDORS for the per-vendor disambiguation.
 QUERY_CLASSES: list[dict] = [
     {
         "class": "news",
-        "template": "{vendor} news",
+        "template": "{query_name} news",
     },
     {
         "class": "lawsuit",
-        "template": "{vendor} lawsuit OR sued OR settles OR court",
+        "template": "{query_name} lawsuit OR sued OR settles OR court",
     },
     {
         "class": "layoff",
-        "template": '{vendor} layoffs OR "job cuts" OR "workforce reduction"',
+        "template": '{query_name} layoffs OR "job cuts" OR "workforce reduction"',
     },
     {
         "class": "leadership",
         "template": (
-            '{vendor} CEO OR CTO OR CFO OR chairman '
+            '{query_name} CEO OR CTO OR CFO OR chairman '
             '"steps down" OR resigns OR departs'
         ),
     },
@@ -96,8 +103,21 @@ LEADERSHIP_ROLES = {
     "president", "founder", "head of",
 }
 LEADERSHIP_VERBS = {
-    "departs", "departure", "steps down", "resign", "resigns",
-    "exits", "ousted", "fired", "replaces",
+    # All grammatical forms of departure verbs. Substring-matched against
+    # title + description, so the conservative matcher fires across:
+    #   "to step down", "will step down", "stepped down", "stepping down",
+    #   "to resign", "has resigned", "is resigning", etc.
+    # Wider than v1 (which only had "steps down") — caught the Stripe CTO
+    # Singleton miss. The Claude validator (`foreshock/validator.py`) is
+    # the safety net for false positives so widening is low-risk.
+    "departs", "departing", "departed", "departure", "departures",
+    "steps down", "step down", "stepping down", "stepped down",
+    "resigns", "resigning", "resigned", "resignation",
+    "exits", "exiting", "ousted",
+    "fired", "firing",
+    "replaces", "replaced", "successor",
+    "retires", "retiring", "retired", "retirement",
+    "transition", "transitioning",
 }
 
 
@@ -177,8 +197,11 @@ async def capture_vendor(
     rejected_events: list[dict] = []
     per_class_counts: dict[str, int] = {}
 
+    # Use disambiguated phrase if the vendor catalog supplies one,
+    # falling back to the bare name (preserves backward compat).
+    query_name = vendor.get("query_name") or vendor["name"]
     for qc in QUERY_CLASSES:
-        query = f"{qc['template'].format(vendor=vendor['name'])} after:{after}"
+        query = f"{qc['template'].format(query_name=query_name)} after:{after}"
         organic = await _call_search(session, query)
         per_class_counts[qc["class"]] = len(organic)
 
@@ -269,6 +292,57 @@ async def capture_vendor(
         },
         events_rejected=rejected_events,
     )
+
+
+async def capture_open_roles_for_vendor(
+    session: ClientSession,
+    vendor: dict,
+    after: str = "2026-01-01",
+    capture_date: str | None = None,
+) -> dict:
+    """
+    Pull a single open_roles observation for one vendor via Bright Data MCP.
+
+    Uses a careers/jobs/hiring-oriented `search_engine` query with the
+    vendor's disambiguated `query_name` so we count vendor-specific careers
+    chatter (not similarly-named entities). The value is the count of
+    recency-filtered organic URLs returned — a defensible proxy for
+    "active job-posting/careers activity" without needing per-vendor
+    careers-page parsing.
+
+    Returns one Airtable-shaped row dict (Type 2; the caller writes it).
+
+    Demo honesty: this is a count of CAREERS-RELATED URLs (jobs / hiring /
+    open-position chatter for the vendor), not a literal job-board count.
+    The notes field states this explicitly so the detail view stays honest.
+    """
+    today = capture_date or date.today().isoformat()
+    query_name = vendor.get("query_name") or vendor["name"]
+    query = (
+        f'{query_name} jobs OR careers OR hiring OR "open position" '
+        f'after:{after}'
+    )
+    organic = await _call_search(session, query)
+    count = len(organic)
+    search_url = (
+        "https://www.google.com/search?q="
+        + query.replace(" ", "+")
+    )[:500]
+    return {
+        "capture_date": today,
+        "vendor_name": vendor["name"],
+        "vendor_type": vendor["type"],
+        "is_demo_vendor": False,
+        "metric": "open_roles",
+        "value": str(count),
+        "unit": "postings",
+        "source_url": search_url,
+        "sentiment": "",
+        "notes": (
+            f"recency-filtered careers/jobs/hiring URL count for "
+            f"{vendor['name']} ({count} hits from search_engine)"
+        )[:255],
+    }
 
 
 async def capture_all(
