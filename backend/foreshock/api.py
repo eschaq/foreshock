@@ -213,6 +213,20 @@ def vendor_detail(name: str, force_refresh: bool = False) -> dict:
             "alert_type": alert.alert_type if alert else None,
             "headline": alert.headline if alert else None,
             "fired_at": alert.fired_at if alert else None,
+            # Lightweight projection of the converging signals — name +
+            # one-line summary + latest observation + evidence count, so
+            # the PDF report can render the "what is converging" section
+            # without re-running scoring/alerts.
+            "signals": [
+                {
+                    "metric": s.metric,
+                    "summary": s.summary,
+                    "latest_value": s.latest_value,
+                    "latest_date": s.latest_date,
+                    "source_count": len(s.source_urls),
+                }
+                for s in (alert.signals if alert else [])
+            ],
         },
         "summary": summary_payload,
         "recent_signals": [

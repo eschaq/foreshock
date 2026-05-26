@@ -15,6 +15,7 @@ from foreshock.live_pull import (
     reset_live_pull_rows,
     stream_live_pull,
 )
+from foreshock.report import build_vendor_report_pdf
 
 app = FastAPI(title="Foreshock API")
 
@@ -49,6 +50,25 @@ def vendor(name: str, refresh: bool = False):
 @app.post("/cache/summaries/clear")
 def clear_cache():
     return {"cleared": clear_summary_cache()}
+
+
+@app.get("/vendors/{name}/report.pdf")
+def vendor_report_pdf(name: str):
+    """One-click DORA evidence-artifact export. Returns a real PDF."""
+    try:
+        pdf = build_vendor_report_pdf(name)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    safe_name = name.replace(" ", "_").replace("/", "_")
+    from datetime import date as _d
+    filename = f"foreshock_{safe_name}_{_d.today().isoformat()}.pdf"
+    return StreamingResponse(
+        iter([pdf]),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @app.get("/status")

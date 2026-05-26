@@ -6,3 +6,4 @@ python-dotenv==1.2.2
 pyairtable==3.3.0
 anthropic
 mcp==1.27.1
+reportlab>=4.0
