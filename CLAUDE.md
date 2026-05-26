@@ -160,6 +160,12 @@ Get acts 1-5 (a working end-to-end pull→diff→alert→summary) proven by mid-
 - Domain/trademark check for Foreshock (non-blocking)
 - Discord confirms: multi-track submission, track-2 scoping, X-tagging-mandatory, mentors
 
+## 11a. Post-MVP capture improvements (roadmap — do NOT execute before submission)
+
+- **Widen `LEADERSHIP_VERBS` in `foreshock/capture.py`** to catch infinitive + gerund forms (`"step down"`, `"stepping down"`, `"to resign"`, `"departing"`) — not just the conjugated forms (`"steps down"`, `"resigns"`, `"departs"`). The 2026-05-26 audit caught a real Stripe CTO departure (`"...to step down after seven years"`) that the conservative matcher missed because the verb list only had `"steps down"`. Safe to widen now that the Claude validator gates event rows (false positives won't reach the schema). Tighten `LEGAL_TERMS` similarly if recall gaps appear.
+- Tighten per-vendor query templates — bare-name searches for short/common vendor names (Stripe, AWS, Plaid) pull off-topic noise (Stripe Communications PR agency, plaid textiles, unrelated Apple/Tim Cook coverage). Use disambiguated variants like `"Stripe Inc."` / `"Amazon Web Services"` / `Plaid fintech`.
+- Auto-promote audit-validated events: when the audit pass finds a `[leadership]`/`[lawsuit]` sentiment row that Claude judges as a real event AND no corresponding event row exists, write the event row in the same pass (provenance prefix `audit-promoted (claude-validated)`).
+
 ---
 
 ## 12. Submission checklist (May 30-31)

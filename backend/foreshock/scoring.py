@@ -82,6 +82,16 @@ def _parse_date(s: str | None) -> date | None:
 # ---------------------------------------------------------------------------
 
 @dataclass
+class SourceRef:
+    """One in-window evidence row — feeds the trust contract."""
+    capture_date: date | None
+    value: Any
+    source_url: str
+    notes: str
+    sentiment: str
+
+
+@dataclass
 class MetricDiff:
     """Per-metric snapshot of change over the observation window."""
     metric: str
@@ -98,6 +108,7 @@ class MetricDiff:
     event_values: list[str] = field(default_factory=list)
     n_observations: int = 0
     deteriorating: bool = False      # signal moved in a bad direction
+    sources: list[SourceRef] = field(default_factory=list)  # in-window evidence
 
 
 # Default trend window. 60d catches a full staged arc even when the latest
@@ -144,6 +155,18 @@ def build_diff(
         prior = rows[-2] if len(rows) >= 2 else None
         oldest_in_window = in_window[0] if in_window else rows[0]
 
+        sources = [
+            SourceRef(
+                capture_date=r["_date"],
+                value=r.get("value"),
+                source_url=(r.get("source_url") or "").strip(),
+                notes=(r.get("notes") or "").strip(),
+                sentiment=(r.get("sentiment") or "").strip(),
+            )
+            for r in in_window
+            if r.get("source_url") or r.get("notes")
+        ]
+
         diff = MetricDiff(
             metric=metric,
             latest_value=latest.get("value"),
@@ -153,6 +176,7 @@ def build_diff(
             oldest_value=oldest_in_window.get("value"),
             oldest_date=oldest_in_window["_date"],
             n_observations=len(rows),
+            sources=sources,
         )
 
         # Numeric metrics — compute deltas + trajectory.
