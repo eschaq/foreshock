@@ -28,6 +28,12 @@ from .summarizer import (
     summarize_fleet,
     validate_citations,
 )
+from .vendor_store import (
+    VendorStoreError,
+    add_user_vendor,
+    deactivate_user_vendor,
+    get_dashboard_vendors,
+)
 
 # Load env from backend/.env so this module works whether the FastAPI
 # app or a script imports it.
@@ -38,17 +44,10 @@ AT_BASE = os.environ.get("AIRTABLE_BASE_ID", "").split("/")[0]
 TABLE = "signals"
 
 
-# Six vendors that appear on the dashboard. Ordered so critical/warning land
-# first; the frontend can re-sort by score. Veridian flagged as demo so the UI
-# can tag it transparently.
-DASHBOARD_VENDORS: list[dict] = [
-    {"name": "Veridian Pay", "type": "Payments/BaaS", "is_demo": True},
-    {"name": "Twilio", "type": "Comms/2FA", "is_demo": False},
-    {"name": "Stripe", "type": "Payments", "is_demo": False},
-    {"name": "Plaid", "type": "Bank Data", "is_demo": False},
-    {"name": "Snowflake", "type": "Data Infra", "is_demo": False},
-    {"name": "AWS", "type": "Cloud Infra", "is_demo": False},
-]
+# Dashboard vendor list is now dynamic — see foreshock/vendor_store.py.
+# `get_dashboard_vendors()` returns SYSTEM vendors (hardcoded, never
+# removable) merged with active USER-added vendors from the
+# `vendor_config` Airtable table.
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +111,13 @@ def vendor_overview(vendor_meta: dict) -> dict:
         "name": vendor_meta["name"],
         "type": vendor_meta["type"],
         "is_demo": vendor_meta.get("is_demo", False),
+        # is_removable comes from vendor_store (False for system vendors,
+        # True for user-added). UI uses this to gate the hover-X button.
+        "is_removable": vendor_meta.get("is_removable", False),
+        # cik/ticker surfaced so the frontend can render the SEC badge
+        # from one source of truth (no whitelist duplication required).
+        "cik": vendor_meta.get("cik"),
+        "ticker": vendor_meta.get("ticker"),
         "score": round(risk.total_score, 1),
         "state": risk.state,
         "convergence_count": risk.convergence_count,
@@ -137,7 +143,7 @@ def vendor_overview(vendor_meta: dict) -> dict:
 
 
 def all_vendors_overview() -> list[dict]:
-    return [vendor_overview(v) for v in DASHBOARD_VENDORS]
+    return [vendor_overview(v) for v in get_dashboard_vendors()]
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +190,9 @@ def _serialize_summary(summary: RiskSummary) -> dict:
 
 def vendor_detail(name: str, force_refresh: bool = False) -> dict:
     """Full detail payload incl AI summary (cached) and recent signal rows."""
-    meta = next((v for v in DASHBOARD_VENDORS if v["name"] == name), None)
+    meta = next(
+        (v for v in get_dashboard_vendors() if v["name"] == name), None
+    )
     if meta is None:
         return {"error": f"unknown vendor: {name}"}
 
@@ -282,6 +290,60 @@ def _fleet_cache_key(vendors: list[dict]) -> tuple:
         (v["name"], v["score"], v["state"], v["signal_count"])
         for v in vendors
     )
+
+
+# ---------------------------------------------------------------------------
+# Vendor management (add / remove / lookup) — Wave 3
+# ---------------------------------------------------------------------------
+
+def add_vendor_payload(
+    name: str,
+    vendor_type: str,
+    cik: str | None = None,
+    ticker: str | None = None,
+    website: str | None = None,
+) -> dict:
+    """Thin wrapper around vendor_store.add_user_vendor returning a
+    JSON-serializable payload. Raises VendorStoreError on validation
+    failures — main.py converts those to 400/503 responses."""
+    created = add_user_vendor(
+        name=name,
+        vendor_type=vendor_type,
+        cik=cik,
+        ticker=ticker,
+        website=website,
+    )
+    return {
+        "added": True,
+        "vendor": {
+            "name": created["name"],
+            "type": created["vendor_type"],
+            "cik": created.get("cik"),
+            "ticker": created.get("ticker"),
+            "website": created.get("website"),
+            "is_demo": False,
+            "is_removable": True,
+        },
+        "edgar_monitoring": bool(created.get("cik")),
+        "note": (
+            "Vendor added. Monitoring starts on the next agent run "
+            "(POST /agent/run, or wait for the daily cron)."
+        ),
+    }
+
+
+def remove_vendor_payload(name: str) -> dict:
+    """Wrapper around vendor_store.deactivate_user_vendor."""
+    return deactivate_user_vendor(name)
+
+
+def lookup_vendor_payload(query: str, top_n: int = 3) -> dict:
+    """SEC company-tickers fuzzy lookup. Returns {matches: [...]}.
+    Empty list when query is empty, no match found, or SEC is unreachable
+    (the lookup module degrades gracefully — never raises here)."""
+    from .sec_lookup import lookup_company
+    matches = lookup_company(query, top_n=top_n)
+    return {"query": query, "matches": matches}
 
 
 def fleet_summary_payload(force_refresh: bool = False) -> dict:

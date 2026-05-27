@@ -40,12 +40,12 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from pyairtable import Api
 
-from .capture import REAL_VENDORS
 from .observation import (
     build_veridian_open_roles_row,
     capture_real_vendor,
 )
 from .validator import validate_event
+from .vendor_store import get_capture_vendors
 
 BD_TOKEN = os.environ.get("BRIGHTDATA_API_TOKEN", "")
 AT_KEY = os.environ.get("AIRTABLE_API_KEY", "")
@@ -75,8 +75,12 @@ async def run_agent_pipeline(emit_event: EmitFn) -> dict:
     anthropic_client = Anthropic(api_key=ANTH_KEY) if ANTH_KEY else None
 
     # ===== STEP 1: PULL =================================================
+    # Vendor list is dynamic — system reals + active user-added (from
+    # vendor_config). Demo vendors are excluded; Veridian's staged data
+    # is appended below as a fixture.
+    capture_vendors = get_capture_vendors()
     emit_event({"step": "pull", "phase": "start",
-                "vendors": [v["name"] for v in REAL_VENDORS] + ["Veridian Pay"]})
+                "vendors": [v["name"] for v in capture_vendors] + ["Veridian Pay"]})
 
     pulled_rows: list[dict] = []
     pull_failures: list[dict] = []
@@ -87,7 +91,7 @@ async def run_agent_pipeline(emit_event: EmitFn) -> dict:
         async with streamablehttp_client(MCP_URL) as (r, w, _):
             async with ClientSession(r, w) as session:
                 await session.initialize()
-                for vendor in REAL_VENDORS:
+                for vendor in capture_vendors:
                     try:
                         result = await capture_real_vendor(
                             session, vendor, today,

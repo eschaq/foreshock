@@ -5,13 +5,18 @@ import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from foreshock.api import (
+    add_vendor_payload,
     all_vendors_overview,
     clear_summary_cache,
     fleet_summary_payload,
+    lookup_vendor_payload,
+    remove_vendor_payload,
     vendor_detail,
 )
+from foreshock.vendor_store import VendorStoreError
 from foreshock.live_pull import (
     LIVE_PULL_QUERY,
     LIVE_PULL_VENDOR,
@@ -37,8 +42,65 @@ def health():
 
 @app.get("/vendors")
 def vendors():
-    """Dashboard grid: all 6 vendors with score, state, sparkline trajectory."""
+    """Dashboard grid: system + active user-added vendors with score, state,
+    sparkline trajectory, is_removable flag."""
     return {"vendors": all_vendors_overview()}
+
+
+# --- Vendor management (Wave 3) ---------------------------------------------
+# /vendors/lookup MUST come before /vendors/{name} so FastAPI doesn't
+# treat "lookup" as a vendor name.
+
+@app.get("/vendors/lookup")
+def vendor_lookup(name: str = "", top_n: int = 3):
+    """Live CIK + ticker lookup against SEC's public-company universe.
+    Returns up to 3 fuzzy matches with confidence score. Empty list for
+    private companies / unmatched queries / SEC outage (graceful degrade)."""
+    return lookup_vendor_payload(name, top_n=top_n)
+
+
+class AddVendorRequest(BaseModel):
+    name: str
+    vendor_type: str
+    cik: str | None = None
+    ticker: str | None = None
+    website: str | None = None
+
+
+@app.post("/vendors")
+def add_vendor(req: AddVendorRequest):
+    """Add a vendor to the monitored list. Persists to `vendor_config` in
+    Airtable. Vendor appears on dashboard immediately at STABLE; signals
+    flow in on the next agent run (no auto-pull on add — honesty)."""
+    try:
+        return add_vendor_payload(
+            name=req.name,
+            vendor_type=req.vendor_type,
+            cik=req.cik,
+            ticker=req.ticker,
+            website=req.website,
+        )
+    except VendorStoreError as e:
+        # 503 when the Airtable table is missing (operator action needed);
+        # 400 for ordinary validation/duplicate errors.
+        msg = str(e)
+        if "does not exist" in msg or "not configured" in msg:
+            raise HTTPException(status_code=503, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+
+
+@app.delete("/vendors/{name}")
+def remove_vendor(name: str):
+    """Soft-delete a user-added vendor (sets is_active=false). Signal
+    history in the `signals` table is preserved. System vendors cannot
+    be removed via this endpoint (returns 400)."""
+    try:
+        return remove_vendor_payload(name)
+    except VendorStoreError as e:
+        msg = str(e)
+        if "not in the monitored list" in msg:
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
 
 
 @app.get("/vendors/{name}")

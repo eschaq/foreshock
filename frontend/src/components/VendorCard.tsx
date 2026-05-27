@@ -6,6 +6,9 @@ import { StateBadge } from "./StateBadge";
 interface Props {
   vendor: VendorOverview;
   onClick: () => void;
+  // Called when the hover X is clicked (user-added vendors only).
+  // Parent opens a confirm modal — this prop doesn't itself remove.
+  onRemoveRequest?: (name: string) => void;
   // When false, the border-pulse class is not applied (no animation).
   // Flips to true once the parent decides the dashboard is fully ready
   // (vendors + fleet summary both settled). CSS animations fire when the
@@ -22,7 +25,12 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export function VendorCard({ vendor, onClick, animate = true }: Props) {
+export function VendorCard({
+  vendor,
+  onClick,
+  onRemoveRequest,
+  animate = true,
+}: Props) {
   // One-shot border pulse for non-stable vendors only, fired when the
   // parent flips `animate` true (dashboard fully loaded). The keyframes
   // (defined in tailwind.config.js) animate border-color + box-shadow
@@ -43,11 +51,37 @@ export function VendorCard({ vendor, onClick, animate = true }: Props) {
     return "";
   })();
 
+  // Card is a div (not a button) so the remove-X can be a real button
+  // inside it without nested-interactive a11y issues. Enter/Space still
+  // open the detail panel; focus ring matches the hover border.
+  function handleKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onClick();
+    }
+  }
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`text-left bg-surface border border-rule rounded-lg p-4 hover:border-ink-primary/15 transition-colors w-full ${pulseClass}`}
+      onKeyDown={handleKey}
+      className={`group relative text-left bg-surface border border-rule rounded-lg p-4 hover:border-ink-primary/15 focus:outline-none focus:border-signal-blue/50 transition-colors w-full cursor-pointer ${pulseClass}`}
     >
+      {vendor.is_removable && onRemoveRequest && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemoveRequest(vendor.name);
+          }}
+          onKeyDown={(e) => e.stopPropagation()}
+          aria-label={`Remove ${vendor.name}`}
+          title={`Remove ${vendor.name}`}
+          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-ink-dim hover:text-signal-red text-sm w-5 h-5 flex items-center justify-center rounded hover:bg-base"
+        >
+          ✕
+        </button>
+      )}
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
@@ -92,6 +126,6 @@ export function VendorCard({ vendor, onClick, animate = true }: Props) {
           {vendor.latest_capture ?? "—"}
         </span>
       </div>
-    </button>
+    </div>
   );
 }

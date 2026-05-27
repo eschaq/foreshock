@@ -18,6 +18,9 @@ export interface VendorOverview {
   name: string;
   type: string;
   is_demo: boolean;
+  is_removable: boolean;
+  cik: string | null;
+  ticker: string | null;
   score: number;
   state: RiskState;
   convergence_count: number;
@@ -26,6 +29,29 @@ export interface VendorOverview {
   trajectory: TrajectoryPoint[];
   components: ComponentScore[];
 }
+
+export interface LookupMatch {
+  name: string;
+  cik: string;
+  ticker: string;
+  match_confidence: number;
+}
+
+export interface VendorLookupResponse {
+  query: string;
+  matches: LookupMatch[];
+}
+
+export const VENDOR_TYPES = [
+  "Payments",
+  "Bank Data",
+  "Cloud Infra",
+  "Comms/2FA",
+  "Data Infra",
+  "Payments/BaaS",
+  "Other",
+] as const;
+export type VendorType = (typeof VENDOR_TYPES)[number];
 
 export interface Citation {
   n: number;

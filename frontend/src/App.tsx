@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator } from "./components/ActivityIndicator";
+import { AddVendorModal } from "./components/AddVendorModal";
 import { AgentPanel } from "./components/AgentPanel";
 import { DetailPanel } from "./components/DetailPanel";
 import { FleetOverview } from "./components/FleetOverview";
+import { RemoveVendorConfirm } from "./components/RemoveVendorConfirm";
 import { RiskScale } from "./components/RiskScale";
 import { SettingsGear } from "./components/SettingsGear";
 import { VendorCard } from "./components/VendorCard";
@@ -45,6 +47,10 @@ function App() {
   const [agentJobId, setAgentJobId] = useState<string | null>(null);
   const [agentTriggering, setAgentTriggering] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
+
+  // Vendor management (Wave 3): add modal + remove confirm flow.
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
   // Bumped whenever the vendor scoreboard changes (initial load, live-pull
   // complete, reset). FleetOverview re-fetches on each bump; backend cache
@@ -139,6 +145,13 @@ function App() {
               <span className="text-signal-red">{tally.critical} critical</span>
               <span className="text-signal-amber">{tally.warning} warning</span>
               <span className="text-signal-teal">{tally.stable} stable</span>
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="text-signal-blue hover:text-signal-blue/80 text-sm font-medium"
+                title="Add a vendor to monitor"
+              >
+                + Add Vendor
+              </button>
               <SettingsGear
                 mode={triggerMode}
                 onModeChange={handleModeChange}
@@ -166,6 +179,7 @@ function App() {
                 vendor={v}
                 animate={dashboardReady}
                 onClick={() => setSelected(v.name)}
+                onRemoveRequest={(name) => setRemoveTarget(name)}
               />
             ))}
           </div>
@@ -184,6 +198,27 @@ function App() {
           jobId={agentJobId}
           onClose={closeAgentPanel}
           onComplete={refresh}
+        />
+      )}
+
+      {showAddModal && (
+        <AddVendorModal
+          onClose={() => setShowAddModal(false)}
+          onAdded={() => {
+            setShowAddModal(false);
+            void refresh();
+          }}
+        />
+      )}
+
+      {removeTarget && (
+        <RemoveVendorConfirm
+          vendorName={removeTarget}
+          onCancel={() => setRemoveTarget(null)}
+          onRemoved={() => {
+            setRemoveTarget(null);
+            void refresh();
+          }}
         />
       )}
 
