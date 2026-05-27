@@ -68,6 +68,43 @@ export function VendorCard({
       onKeyDown={handleKey}
       className={`group relative text-left bg-surface border border-rule rounded-lg p-4 hover:border-ink-primary/15 focus:outline-none focus:border-signal-blue/50 transition-colors w-full cursor-pointer ${pulseClass}`}
     >
+      {/* Informational hover overlay — same on both vendor types.
+          pointer-events-none so card click (open detail) always fires
+          through. Secondary line for system vendors explains the
+          missing X. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 rounded-lg bg-base/75 backdrop-blur-[1px] border border-ink-primary/15 flex flex-col items-center justify-center gap-1.5 opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-10"
+      >
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="text-ink-muted"
+        >
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+        <span className="text-ink-primary text-xs uppercase tracking-[0.2em] font-semibold">
+          view details
+        </span>
+        {!vendor.is_removable && (
+          <span className="text-ink-dim text-[10px] mt-0.5">
+            system vendor · protected during demo
+          </span>
+        )}
+      </div>
+
+      {/* Remove X — user-added vendors only. Sits above the overlay
+          (z-20) so it stays clickable and visually distinct. Bright red
+          circle on hover so it's findable; subtle outline at rest so it
+          doesn't clutter. stopPropagation keeps the card-click from
+          firing when the user actually means to remove. */}
       {vendor.is_removable && onRemoveRequest && (
         <button
           onClick={(e) => {
@@ -77,7 +114,7 @@ export function VendorCard({
           onKeyDown={(e) => e.stopPropagation()}
           aria-label={`Remove ${vendor.name}`}
           title={`Remove ${vendor.name}`}
-          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-ink-dim hover:text-signal-red text-sm w-5 h-5 flex items-center justify-center rounded hover:bg-base"
+          className="absolute top-2 right-2 z-20 w-7 h-7 flex items-center justify-center rounded-full bg-signal-red text-white text-sm font-semibold leading-none opacity-0 group-hover:opacity-100 focus:opacity-100 hover:scale-110 transition-all duration-150 shadow-lg ring-2 ring-base"
         >
           ✕
         </button>

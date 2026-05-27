@@ -94,6 +94,12 @@ export async function removeVendor(name: string): Promise<unknown> {
   const res = await fetch(`${BASE}/vendors/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
+  // 404 = vendor already gone (another tab removed it, or the backend
+  // was restarted with a fresh cache). Treat as idempotent success so
+  // the UI closes the modal and refreshes — no error to recover from.
+  if (res.status === 404) {
+    return { already_removed: true };
+  }
   if (!res.ok) {
     const text = await res.text();
     let detail = text;
