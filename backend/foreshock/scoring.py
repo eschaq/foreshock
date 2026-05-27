@@ -13,6 +13,7 @@ State bands:   <30 stable   30-60 warning   >=60 critical
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -344,21 +345,27 @@ def _open_roles_component(diffs: dict[str, MetricDiff]) -> ComponentScore:
     """
     Leading-indicator workforce signal. Hiring freezes precede layoffs —
     a sustained drop in open roles is the early foreshock to headcount
-    contraction. We score downward swings only; upward swings are too
-    noisy to read as risk (could be expansion, restructuring, or backfill).
+    contraction. Stepped bands by contraction depth; upward swings score 0
+    (noisy — could be expansion, restructuring, backfill). A single
+    observation (no trajectory yet) scores 0.
     """
     d = diffs.get("open_roles")
     score = 0.0
     drivers: list[str] = []
     if d and d.pct_trajectory is not None and d.pct_trajectory < 0:
         pct = d.pct_trajectory
-        # Linear ramp: -10% -> 20, -25% -> 50, -50% -> 100. Below ~5% is noise.
-        score = min(100.0, -pct * 200.0)
-        if score >= 10.0:
-            drivers.append(
-                f"open_roles {d.oldest_value} -> {d.latest_value} "
-                f"({pct*100:+.1f}%) — hiring contraction"
-            )
+        if pct <= -0.50:
+            score, band = 100.0, "hiring freeze (-50% or worse)"
+        elif pct <= -0.30:
+            score, band = 75.0, "significant contraction (-30% to -49%)"
+        elif pct <= -0.10:
+            score, band = 50.0, "deteriorating (-10% to -29%)"
+        else:
+            score, band = 20.0, "minor signal (0% to -9%)"
+        drivers.append(
+            f"open_roles {d.oldest_value} -> {d.latest_value} "
+            f"({pct*100:+.1f}%) — {band}"
+        )
     return ComponentScore("open_roles", score, WEIGHTS["open_roles"],
                           score * WEIGHTS["open_roles"], drivers)
 
@@ -392,24 +399,54 @@ def _sentiment_component(diffs: dict[str, MetricDiff]) -> ComponentScore:
 
 
 def _news_volume_component(diffs: dict[str, MetricDiff]) -> ComponentScore:
+    """
+    Volume scoring with explicit label/count discrimination.
+
+    Bug being fixed: a label value ("layoff news") used to map to 99 via
+    VOLUME_LABEL_TO_NUM*33, while a numeric count of 8 mapped to only 30.
+    A label and a small count carry equivalent epistemic weight; the
+    label form just inflated.
+
+    New policy:
+      value_type=count   -> score normally per (count-5)*10 rubric
+      value_type=label   -> 1) try to extract an embedded number; if found,
+                              treat as a count
+                            2) otherwise cap at 20 (low-confidence)
+    """
     d = diffs.get("news_volume")
     score = 0.0
     drivers: list[str] = []
-    if d and d.numeric_trajectory is not None:
-        v = d.numeric_trajectory
-        # If latest_value was numeric (count), v is the count.
-        # If latest_value was a label, v is mapped 0..3.
-        latest_raw = str(d.latest_value or "")
-        if _to_float(d.latest_value) is not None:
-            # Count of organic hits: <=5 quiet, 8 elevated, 15+ flooded.
-            score = max(0.0, min(100.0, (v - 5) * 10.0))
+    if d is not None:
+        latest_raw = str(d.latest_value or "").strip()
+        clean_num = _to_float(d.latest_value)
+        if clean_num is not None:
+            # value_type=count
+            score = max(0.0, min(100.0, (clean_num - 5) * 10.0))
             if score > 0:
-                drivers.append(f"news_volume count={int(v)} (elevated)")
-        else:
-            # Label scale 0..3
-            score = min(100.0, v * 33.0)
-            if score > 0:
-                drivers.append(f"news_volume='{latest_raw}'")
+                drivers.append(
+                    f"news_volume count={int(clean_num)} "
+                    f"(value_type=count)"
+                )
+        elif latest_raw:
+            # value_type=label
+            embedded = re.search(r"\d+", latest_raw)
+            if embedded:
+                extracted = float(embedded.group())
+                score = max(0.0, min(100.0, (extracted - 5) * 10.0))
+                if score > 0:
+                    drivers.append(
+                        f"news_volume='{latest_raw}' "
+                        f"(value_type=label, parsed count={int(extracted)})"
+                    )
+            else:
+                # Pure label: proportional 0..3 scale capped at 20.
+                label_score = VOLUME_LABEL_TO_NUM.get(latest_raw.lower(), 0.0)
+                score = min(20.0, label_score * (20.0 / 3.0))
+                if score > 0:
+                    drivers.append(
+                        f"news_volume='{latest_raw}' "
+                        f"(value_type=label, low-confidence cap=20)"
+                    )
     # Also account for outage_incident here (low weight but routes home).
     d_out = diffs.get("outage_incident")
     if d_out and d_out.event_count_window > 0:

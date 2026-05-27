@@ -103,21 +103,25 @@ LEADERSHIP_ROLES = {
     "president", "founder", "head of",
 }
 LEADERSHIP_VERBS = {
-    # All grammatical forms of departure verbs. Substring-matched against
-    # title + description, so the conservative matcher fires across:
-    #   "to step down", "will step down", "stepped down", "stepping down",
-    #   "to resign", "has resigned", "is resigning", etc.
-    # Wider than v1 (which only had "steps down") — caught the Stripe CTO
-    # Singleton miss. The Claude validator (`foreshock/validator.py`) is
-    # the safety net for false positives so widening is low-risk.
-    "departs", "departing", "departed", "departure", "departures",
+    # Departure + change verbs, substring-matched against title + description.
+    # Includes bare-stem forms (`depart`, `resign`, `retire`, `exit`, `leave`)
+    # so infinitive + modal constructions all hit the heuristic:
+    #   "to step down", "will resign", "to depart after seven years",
+    #   "is leaving the company", "expected to retire".
+    # The Claude validator (`foreshock/validator.py`) is the safety net
+    # for false positives, so widening recall is the right trade.
+    # Departure / leaving the role:
+    "depart", "departs", "departing", "departed", "departure", "departures",
+    "resign", "resigns", "resigning", "resigned", "resignation",
+    "retire", "retires", "retiring", "retired", "retirement",
+    "exit", "exits", "exiting",
+    "leave", "leaves", "leaving", "left",
     "steps down", "step down", "stepping down", "stepped down",
-    "resigns", "resigning", "resigned", "resignation",
-    "exits", "exiting", "ousted",
-    "fired", "firing",
-    "replaces", "replaced", "successor",
-    "retires", "retiring", "retired", "retirement",
+    "ousted", "fired", "firing",
+    "replaces", "replaced", "successor", "succeeds",
     "transition", "transitioning",
+    # New-appointment forms (lower-confidence change events; validator gates).
+    "appointed", "named as", "name as",
 }
 
 
@@ -275,7 +279,10 @@ async def capture_vendor(
             f"{vendor['name'].replace(' ', '+')}+news"
         ),
         "sentiment": "",
-        "notes": f"unique_urls={len(seen_urls)}; per_class: {breakdown}"[:255],
+        "notes": (
+            f"value_type=count; unique_urls={len(seen_urls)}; "
+            f"per_class: {breakdown}"
+        )[:255],
     }
 
     rows = sentiment_rows + legal_rows + leadership_rows + [volume_row]
