@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator } from "./components/ActivityIndicator";
 import { AddVendorModal } from "./components/AddVendorModal";
 import { AgentPanel } from "./components/AgentPanel";
+import { ConcentrationRisk } from "./components/ConcentrationRisk";
 import { DetailPanel } from "./components/DetailPanel";
 import { FleetOverview } from "./components/FleetOverview";
 import { RemoveVendorConfirm } from "./components/RemoveVendorConfirm";
@@ -168,6 +169,13 @@ function App() {
 
       <main className="px-6 py-6 max-w-7xl mx-auto">
         <FleetOverview nonce={fleetNonce} onSettled={handleFleetSettled} />
+
+        {!loading && !error && vendors.length > 0 && (
+          <ConcentrationRisk
+            vendors={vendors}
+            onSelect={(name) => setSelected(name)}
+          />
+        )}
 
         {loading && <p className="text-ink-muted">loading scoreboard…</p>}
         {error && <p className="text-signal-red">error: {error}</p>}
