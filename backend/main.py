@@ -14,6 +14,7 @@ from foreshock.api import (
     fleet_summary_payload,
     lookup_vendor_payload,
     remove_vendor_payload,
+    trust_audit_payload,
     vendor_detail,
 )
 from foreshock.vendor_store import VendorStoreError
@@ -121,6 +122,14 @@ def fleet_summary(refresh: bool = False):
 @app.post("/cache/summaries/clear")
 def clear_cache():
     return {"cleared": clear_summary_cache()}
+
+
+@app.get("/trust/audit")
+def trust_audit():
+    """Fleet-wide citation audit. Powers the dashboard trust indicator.
+    Returns 0 unresolved when every AI claim resolves to a numbered
+    source — the trust contract holding end-to-end."""
+    return trust_audit_payload()
 
 
 @app.get("/vendors/{name}/report.pdf")

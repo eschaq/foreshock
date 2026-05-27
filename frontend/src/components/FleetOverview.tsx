@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { fetchFleetSummary } from "../lib/api";
-import type { FleetSummary, RiskState } from "../types";
+import { fetchFleetSummary, fetchTrustAudit } from "../lib/api";
+import type { FleetSummary, RiskState, TrustAudit } from "../types";
+import { TrustAuditModal } from "./TrustAuditModal";
 
 // Derive the fleet's worst-state from the per-state counts, so the top
 // border of the Fleet Overview card visually matches the scoring bands
@@ -46,11 +47,16 @@ export function FleetOverview({ nonce = 0, onSettled }: Props) {
   const [summary, setSummary] = useState<FleetSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Wave 6 trust badge — fleet-wide citation audit. Optional; failures
+  // are silenced so the dashboard never shows a broken indicator.
+  const [trust, setTrust] = useState<TrustAudit | null>(null);
+  const [trustModalOpen, setTrustModalOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError(null);
+    setTrust(null);
     fetchFleetSummary()
       .then((s) => {
         if (active) setSummary(s);
@@ -63,6 +69,16 @@ export function FleetOverview({ nonce = 0, onSettled }: Props) {
           setLoading(false);
           onSettled?.();
         }
+      });
+    // Fire the trust audit fetch alongside but independently — the
+    // dashboard load doesn't block on it, and a failure just hides the
+    // badge (no error UI).
+    fetchTrustAudit()
+      .then((t) => {
+        if (active) setTrust(t);
+      })
+      .catch(() => {
+        if (active) setTrust(null);
       });
     return () => {
       active = false;
@@ -139,6 +155,58 @@ export function FleetOverview({ nonce = 0, onSettled }: Props) {
             </p>
           )}
         </div>
+      )}
+
+      {/* Wave 6 trust badge — clickable button that opens the per-vendor
+          audit breakdown modal. Hidden gracefully when trust=null. */}
+      {trust && trust.vendor_audits.length > 0 && (
+        <div className="mt-4 pt-3 border-t border-rule flex justify-end">
+          <button
+            onClick={() => setTrustModalOpen(true)}
+            title="View per-vendor citation audit breakdown"
+            className="text-xs text-left rounded hover:bg-base/40 -mx-2 -my-1 px-2 py-1 transition-colors focus:outline-none focus:bg-base/40"
+          >
+            {trust.unresolved === 0 && trust.all_pass ? (
+              <span className="text-ink-muted">
+                <span className="text-signal-blue font-semibold mr-1">✓</span>
+                <span className="text-ink-primary font-medium">
+                  Citation audit
+                </span>{" "}
+                ·{" "}
+                <span className="font-mono tabular-nums text-ink-primary">
+                  {trust.total_claims}
+                </span>{" "}
+                AI claims across{" "}
+                <span className="font-mono tabular-nums text-ink-primary">
+                  {trust.vendor_audits.length}
+                </span>{" "}
+                vendors ·{" "}
+                <span className="text-signal-blue font-medium">
+                  0 unresolved
+                </span>{" "}
+                · all claims sourced
+                <span className="text-ink-dim ml-2 text-[10px]">
+                  (click for breakdown)
+                </span>
+              </span>
+            ) : (
+              <span className="text-signal-amber font-medium">
+                ⚠ {trust.unresolved} unresolved citation
+                {trust.unresolved === 1 ? "" : "s"} detected
+                <span className="text-ink-dim ml-2 text-[10px] font-normal">
+                  (click for breakdown)
+                </span>
+              </span>
+            )}
+          </button>
+        </div>
+      )}
+
+      {trustModalOpen && trust && (
+        <TrustAuditModal
+          audit={trust}
+          onClose={() => setTrustModalOpen(false)}
+        />
       )}
     </section>
   );

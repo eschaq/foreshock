@@ -157,6 +157,22 @@ export interface AgentSummary {
   failures: { vendor: string; error: string }[];
 }
 
+export interface TrustAuditVendor {
+  vendor: string;
+  claims_cited: number;
+  sources_available: number;
+  unresolved: number;
+  audit_pass: boolean;
+}
+
+export interface TrustAudit {
+  total_claims: number;
+  total_citations: number;
+  unresolved: number;
+  all_pass: boolean;
+  vendor_audits: TrustAuditVendor[];
+}
+
 export interface FleetSummary {
   headline: string;
   narrative: string;

@@ -346,6 +346,72 @@ def lookup_vendor_payload(query: str, top_n: int = 3) -> dict:
     return {"query": query, "matches": matches}
 
 
+# ---------------------------------------------------------------------------
+# Citation trust audit (Wave 6) — aggregates the per-vendor summary
+# `audit` block into a single fleet-wide statement: how many AI claims
+# were made, how many sources backed them, how many were unresolved.
+#
+# Positioning context (for the submission package — do not surface to UI):
+#   "Foreshock's citation audit infrastructure verifies every AI-generated
+#   claim against a numbered source. Current audit result: 0 unresolved
+#   citations across all monitored vendors. In December 2025, a GPTZero
+#   investigation found 60% hallucination rates in an EY compliance
+#   advisory. FINRA's 2026 oversight report specifically flagged AI
+#   hallucination as a compliance risk."
+# ---------------------------------------------------------------------------
+
+def trust_audit_payload() -> dict:
+    """
+    Roll up the per-vendor audit block. Stable vendors have no AI
+    summary and are skipped — they don't generate claims to audit.
+
+    Cost: one `vendor_detail` call per vendor. Both vendor_overview
+    inside it and the summary itself are cached, so warm-cache cost
+    is small. Cold-cache hits trigger Claude generation; the endpoint
+    will be slow on first call after a fresh capture.
+    """
+    vendors = get_dashboard_vendors()
+    total_claims = 0          # citation markers actually used in narratives
+    total_citations = 0       # sources made available to the model
+    unresolved = 0            # cited but unresolvable -> hallucinations
+    vendor_audits: list[dict] = []
+
+    for v in vendors:
+        try:
+            detail = vendor_detail(v["name"])
+        except Exception:
+            continue
+        summary = detail.get("summary")
+        if not summary:
+            continue
+        audit = summary.get("audit") or {}
+        cited = len(audit.get("cited", []) or [])
+        available = len(audit.get("available", []) or [])
+        invalid = len(audit.get("invalid", []) or [])
+        all_sourced = bool(audit.get("all_claims_sourced", True))
+
+        total_claims += cited
+        total_citations += available
+        unresolved += invalid
+
+        vendor_audits.append({
+            "vendor": v["name"],
+            "claims_cited": cited,
+            "sources_available": available,
+            "unresolved": invalid,
+            "audit_pass": all_sourced,
+        })
+
+    all_pass = unresolved == 0 and all(va["audit_pass"] for va in vendor_audits)
+    return {
+        "total_claims": total_claims,
+        "total_citations": total_citations,
+        "unresolved": unresolved,
+        "all_pass": all_pass,
+        "vendor_audits": vendor_audits,
+    }
+
+
 def fleet_summary_payload(force_refresh: bool = False) -> dict:
     vendors = all_vendors_overview()
     key = _fleet_cache_key(vendors)

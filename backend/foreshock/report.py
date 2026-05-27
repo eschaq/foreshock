@@ -198,7 +198,15 @@ def _make_styles() -> dict[str, ParagraphStyle]:
 # Per-page chrome (header rule + brand wordmark + footer rule + page number)
 # ---------------------------------------------------------------------------
 
-def _draw_chrome(canvas, doc):
+def _draw_chrome(canvas, doc, audit: dict | None = None):
+    """
+    Per-page chrome. Optional `audit` parameter renders a second
+    citation-integrity footer line below the existing one — the
+    Wave 6 trust badge for the DORA evidence artifact.
+
+    Call sites wrap this in a closure that captures audit data; see
+    `build_vendor_report_pdf` for the binding.
+    """
     _register_fonts()
     canvas.saveState()
     width, height = doc.pagesize
@@ -241,6 +249,29 @@ def _draw_chrome(canvas, doc):
         footer_y - 0.18 * inch,
         f"Page {doc.page}  ·  CONFIDENTIAL  ·  example output",
     )
+
+    # Wave 6 trust footer — a second line of Sometype Mono below the
+    # standard footer. PASS verdict colored teal; FAIL colored amber
+    # (shouldn't happen on a healthy run but we surface honestly).
+    if audit is not None:
+        cited = len(audit.get("cited") or [])
+        invalid = len(audit.get("invalid") or [])
+        pass_audit = bool(audit.get("all_claims_sourced", True))
+        verdict = "PASS" if pass_audit else "FAIL"
+        verdict_color = C_STABLE if pass_audit else C_WARNING
+
+        audit_y = footer_y - 0.32 * inch
+        canvas.setFont(F_MONO, 6.5)
+        canvas.setFillColor(C_INK_MUTED)
+        prefix = (
+            f"Citation integrity  ·  AI-generated claims: {cited}  ·  "
+            f"Unresolved citations: {invalid}  ·  Audit: "
+        )
+        canvas.drawString(margin_x, audit_y, prefix)
+        prefix_w = canvas.stringWidth(prefix, F_MONO, 6.5)
+        canvas.setFont(F_MONO_MEDIUM, 6.5)
+        canvas.setFillColor(verdict_color)
+        canvas.drawString(margin_x + prefix_w, audit_y, verdict)
 
     canvas.restoreState()
 
@@ -780,10 +811,19 @@ def build_vendor_report_pdf(vendor_name: str) -> bytes:
         doc.width, doc.height,
         showBoundary=0,
     )
+    # Pass the per-vendor citation audit into the page chrome so every
+    # page footer can display the trust verdict. Vendors with no AI
+    # summary (stable, no alert) have no audit and the footer line is
+    # silently skipped.
+    audit_for_footer = (detail.get("summary") or {}).get("audit")
+
+    def chrome_with_audit(canvas, doc):
+        _draw_chrome(canvas, doc, audit=audit_for_footer)
+
     doc.addPageTemplates([PageTemplate(
         id="all",
         frames=[frame],
-        onPage=_draw_chrome,
+        onPage=chrome_with_audit,
     )])
     doc.build(story)
     return buf.getvalue()

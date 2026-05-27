@@ -1,6 +1,7 @@
 import type {
   FleetSummary,
   SystemStatus,
+  TrustAudit,
   VendorDetail,
   VendorLookupResponse,
   VendorOverview,
@@ -35,6 +36,12 @@ export async function fetchFleetSummary(): Promise<FleetSummary> {
   const res = await fetch(`${BASE}/fleet/summary`);
   if (!res.ok) throw new Error(`fleet summary ${res.status}`);
   return (await res.json()) as FleetSummary;
+}
+
+export async function fetchTrustAudit(): Promise<TrustAudit> {
+  const res = await fetch(`${BASE}/trust/audit`);
+  if (!res.ok) throw new Error(`trust audit ${res.status}`);
+  return (await res.json()) as TrustAudit;
 }
 
 export function livePullStreamUrl(mode: "live" | "seeded"): string {
