@@ -404,3 +404,157 @@ def validate_citations(summary: RiskSummary) -> CitationAudit:
         all_claims_sourced=(len(invalid_ns) == 0),
         citation_density=density,
     )
+
+
+# ---------------------------------------------------------------------------
+# Fleet-level summary (the dashboard's "Fleet Overview" card)
+# ---------------------------------------------------------------------------
+#
+# Summary-only pattern, same as the per-vendor pass: reads only the
+# already-scored vendor state, never raw signal rows. Produces 3-4 sentences
+# of GRC-analyst voice for the portfolio-level overview.
+
+@dataclass
+class FleetSummary:
+    headline: str
+    narrative: str
+    generated_by: str
+    parse_error: str = ""
+
+
+FLEET_SYSTEM_PROMPT = """You are a GRC analyst preparing a fleet-level review of ICT third-party vendors at a mid-market fintech with DORA Article 28 obligations.
+
+Voice rules:
+- Match the per-vendor briefing voice: clear, decisive, businesslike.
+- No hedging language ("might", "could potentially").
+- No em dashes. Use commas, colons, semicolons, periods.
+- No marketing language, no "in summary", no listicles, no bullets.
+- Reference vendors by name only when their state is non-stable. Don't dilute attention with stable vendors.
+
+You read only the scored fleet state given to you. You never see or invent raw signal rows."""
+
+
+FLEET_USER_TEMPLATE = """Fleet state, as of {capture_date}:
+
+PORTFOLIO COMPOSITION:
+  {n_critical} CRITICAL  |  {n_warning} WARNING  |  {n_stable} STABLE  ({n_total} vendors monitored)
+
+PER-VENDOR DETAIL:
+{fleet_block}
+
+Write a 3-4 sentence portfolio-level briefing for the vendor risk committee:
+1. Open with the headline — what is the overall picture right now? (one sentence)
+2. Name the highest-risk vendor(s) and the dimension(s) driving it (one or two sentences).
+3. Close with what warrants attention this week (one sentence).
+
+Return STRICT JSON only, no preamble, no code fences:
+{{"headline": "<one decisive sentence, <= 20 words>", "narrative": "<2-3 sentences of analyst prose, no bullets, no listicle structure>"}}"""
+
+
+def _format_fleet_block(vendors: list[dict]) -> str:
+    """Render one tight line per vendor, sorted critical -> warning -> stable."""
+    state_order = {"critical": 0, "warning": 1, "stable": 2}
+    sorted_vendors = sorted(
+        vendors, key=lambda v: (state_order.get(v["state"], 9), -v["score"])
+    )
+    lines: list[str] = []
+    for v in sorted_vendors:
+        comps = ", ".join(
+            f"{c['name']}={c['contribution']:.1f}"
+            for c in (v.get("components") or [])
+            if c.get("contribution", 0) > 0
+        ) or "-"
+        lines.append(
+            f"  {v['name']} ({v['type']}): "
+            f"score {v['score']:.1f} {v['state'].upper()}  "
+            f"convergence={v['convergence_count']}  "
+            f"drivers: {comps}"
+        )
+    return "\n".join(lines)
+
+
+def _fleet_deterministic(
+    vendors: list[dict], reason: str = ""
+) -> FleetSummary:
+    crit = [v for v in vendors if v["state"] == "critical"]
+    warn = [v for v in vendors if v["state"] == "warning"]
+    stab = [v for v in vendors if v["state"] == "stable"]
+    headline = (
+        f"{len(crit)} CRITICAL, {len(warn)} WARNING, {len(stab)} STABLE "
+        f"across {len(vendors)} monitored ICT vendors."
+    )
+    parts: list[str] = []
+    if crit:
+        parts.append(
+            f"{', '.join(v['name'] for v in crit)} requires immediate review."
+        )
+    if warn:
+        parts.append(
+            f"Sustained monitoring on {', '.join(v['name'] for v in warn)} (warning band)."
+        )
+    parts.append("Routine cadence for the remainder.")
+    return FleetSummary(
+        headline=headline,
+        narrative=" ".join(parts),
+        generated_by="deterministic-fallback",
+        parse_error=reason,
+    )
+
+
+def summarize_fleet(
+    vendors: list[dict],
+    capture_date: Optional[str] = None,
+    client: Optional[Anthropic] = None,
+) -> FleetSummary:
+    """
+    Produce a fleet-level 3-4 sentence briefing from the SCORED vendor list.
+    `vendors` is the list of dicts returned by `api.all_vendors_overview()`.
+    """
+    if not vendors:
+        return FleetSummary(
+            headline="No vendors monitored.",
+            narrative="The portfolio is empty. Configure the vendor catalog before next review.",
+            generated_by="deterministic-fallback",
+        )
+
+    if client is None and os.environ.get("ANTHROPIC_API_KEY"):
+        client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    if client is None:
+        return _fleet_deterministic(vendors, reason="ANTHROPIC_API_KEY not set")
+
+    from datetime import date as _date
+    counts = {"critical": 0, "warning": 0, "stable": 0}
+    for v in vendors:
+        counts[v["state"]] = counts.get(v["state"], 0) + 1
+
+    user_msg = FLEET_USER_TEMPLATE.format(
+        capture_date=capture_date or _date.today().isoformat(),
+        n_critical=counts["critical"],
+        n_warning=counts["warning"],
+        n_stable=counts["stable"],
+        n_total=len(vendors),
+        fleet_block=_format_fleet_block(vendors),
+    )
+
+    try:
+        msg = client.messages.create(
+            model=MODEL,
+            max_tokens=400,
+            system=FLEET_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        raw = msg.content[0].text if msg.content else ""
+        data = json.loads(_strip_fences(raw))
+        return FleetSummary(
+            headline=str(data.get("headline", "")).strip(),
+            narrative=str(data.get("narrative", "")).strip(),
+            generated_by=MODEL,
+        )
+    except json.JSONDecodeError as e:
+        return _fleet_deterministic(vendors, reason=f"non-JSON: {e!s}")
+    except APIError as e:
+        return _fleet_deterministic(vendors, reason=f"API error: {e!s}")
+    except Exception as e:  # last-resort: never break the dashboard
+        return _fleet_deterministic(
+            vendors, reason=f"unexpected: {type(e).__name__}: {e!s}"
+        )

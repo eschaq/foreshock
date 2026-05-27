@@ -1,12 +1,68 @@
+/* -----------------------------------------------------------------------
+ * Typography foundation (Stage 3a)
+ *   Primary family: General Sans — self-hosted from Fontshare via
+ *                   /public/fonts/general-sans/*.woff2
+ *   Mono family   : Sometype Mono — via @fontsource/sometype-mono
+ *                   (imported in main.tsx so Vite bundles it)
+ *
+ * General Sans declarations live here so the woff2 paths resolve to the
+ * /fonts/ static-asset directory served by Vite. font-display: swap so
+ * text is readable while woff2 fetches (no FOIT).
+ * ----------------------------------------------------------------------- */
+
+@font-face {
+  font-family: 'General Sans';
+  src: url('/fonts/general-sans/general-sans-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'General Sans';
+  src: url('/fonts/general-sans/general-sans-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'General Sans';
+  src: url('/fonts/general-sans/general-sans-600.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'General Sans';
+  src: url('/fonts/general-sans/general-sans-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* -----------------------------------------------------------------------
+ * Body defaults — General Sans as primary, with a robust system fallback
+ * chain so text renders before the woff2 lands (font-display: swap).
+ * Per DESIGN.md: weight 400 body, weight-driven hierarchy via Tailwind.
+ * ----------------------------------------------------------------------- */
 html,
 body,
 #root {
   min-height: 100vh;
   background-color: #0a0c12;
   color: #eef1f8;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    'General Sans',
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }

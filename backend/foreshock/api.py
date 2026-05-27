@@ -21,7 +21,13 @@ from pyairtable import Api
 
 from .alerts import evaluate_alert
 from .scoring import fetch_signals_for_vendor, score_vendor
-from .summarizer import RiskSummary, summarize_alert, validate_citations
+from .summarizer import (
+    FleetSummary,
+    RiskSummary,
+    summarize_alert,
+    summarize_fleet,
+    validate_citations,
+)
 
 # Load env from backend/.env so this module works whether the FastAPI
 # app or a script imports it.
@@ -117,7 +123,12 @@ def vendor_overview(vendor_meta: dict) -> dict:
                 "name": c.name,
                 "score": round(c.score, 1),
                 "weight": c.weight,
-                "contribution": round(c.contribution, 1),
+                # Full precision — consumers format for their own context. The
+                # PDF report displays at 2 decimals and reconciles Total via
+                # the canonical risk.total_score (not a re-sum), which
+                # eliminates the pre-rounding error that caused the §2/§3
+                # mismatch on the first cut of the DORA export.
+                "contribution": c.contribution,
                 "drivers": list(c.drivers),
             }
             for c in risk.components
@@ -248,4 +259,50 @@ def clear_summary_cache() -> int:
     with _cache_lock:
         n = len(_summary_cache)
         _summary_cache.clear()
-        return n
+    with _fleet_cache_lock:
+        n += len(_fleet_summary_cache)
+        _fleet_summary_cache.clear()
+    return n
+
+
+# ---------------------------------------------------------------------------
+# Fleet-level summary (dashboard "Fleet Overview" card)
+# ---------------------------------------------------------------------------
+# Cached by a hash of (name, score, state, signal_count) tuples — same shape
+# as the per-vendor cache: any change in vendor state, score, or row count
+# auto-invalidates. One Claude call's worth of latency on cold start; cached
+# thereafter until any vendor data shifts.
+
+_fleet_summary_cache: dict[tuple, dict] = {}
+_fleet_cache_lock = Lock()
+
+
+def _fleet_cache_key(vendors: list[dict]) -> tuple:
+    return tuple(
+        (v["name"], v["score"], v["state"], v["signal_count"])
+        for v in vendors
+    )
+
+
+def fleet_summary_payload(force_refresh: bool = False) -> dict:
+    vendors = all_vendors_overview()
+    key = _fleet_cache_key(vendors)
+    with _fleet_cache_lock:
+        cached = _fleet_summary_cache.get(key)
+        if cached is not None and not force_refresh:
+            return cached
+        summary = summarize_fleet(vendors)
+        payload = {
+            "headline": summary.headline,
+            "narrative": summary.narrative,
+            "generated_by": summary.generated_by,
+            "parse_error": summary.parse_error,
+            "fleet_counts": {
+                "critical": sum(1 for v in vendors if v["state"] == "critical"),
+                "warning":  sum(1 for v in vendors if v["state"] == "warning"),
+                "stable":   sum(1 for v in vendors if v["state"] == "stable"),
+                "total":    len(vendors),
+            },
+        }
+        _fleet_summary_cache[key] = payload
+        return payload

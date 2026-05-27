@@ -1,684 +1,364 @@
 # Foreshock — System Specification (current state)
 
-> **Snapshot:** 2026-05-26 end-of-build-day-2. Documents what's actually built and behaving, for enhancement-planning purposes. For product vision and explicitly-roadmapped features, see [CLAUDE.md](CLAUDE.md). For the build-sequence narrative, see git log.
+> Snapshot as of 2026-05-27. Documents what's actually shipped and behaving — not roadmap. For build-sequence narrative see git log; for vision and explicit roadmap see [CLAUDE.md](CLAUDE.md).
 
 ---
 
 ## 0. TL;DR
 
-Foreshock is a continuous third-party-vendor risk-monitoring application for fintech GRC teams. It watches **6 named vendors** (5 real + 1 staged demo) across public web sources via **Bright Data MCP**, stores timestamped signal history in **Airtable**, runs a **CDC diff + weighted-component risk score**, fires a **convergence alert** when a vendor crosses critical, and produces a **fully-cited GRC-analyst-style narrative via Claude**. A **React/Tailwind dashboard** renders the scoreboard with sparkline trajectories, click-to-drill detail panels, a quiet always-on activity indicator, and a **settings gear that toggles between live MCP capture and a cached fixture replay** for demo network safety.
+Foreshock is a continuous third-party vendor risk-monitoring app for fintech GRC teams. It watches **6 named vendors** (5 real + 1 staged demo) via **Bright Data MCP**, appends Type-2 SCD history to **Airtable**, runs a **CDC diff + 5-component weighted risk score**, fires **convergence alerts** at critical, and produces a **fully-cited GRC-analyst narrative via Claude Sonnet 4.6**. A React/Tailwind dashboard renders the scoreboard with sparkline trajectories, click-to-drill detail panels, an always-on activity indicator, a settings-gear **live/seeded mode toggle** for demo network safety, and **one-click DORA evidence PDF export**. An async **agent pipeline** (Pull → Clean → Promote) runs unattended via API trigger or cron.
 
-Build acts 1–7.5 are complete. The visual reskin (act 8) and demo video recording (act 9) remain.
+Build acts 1–7.5 complete. Visual reskin (act 8) and demo video (act 9) remain.
 
-Total source: ~5,400 lines (~3,000 Python backend + ~1,500 TypeScript frontend + ~900 supporting scripts).
-
----
-
-## 1. Product positioning (what's actually built)
-
-- **Audience.** A GRC / compliance lead at a mid-market fintech ($50M–$2B rev) managing DORA obligations on a stack of critical ICT vendors. Often a one-person team.
-- **What the product surfaces.** Real-time business-health signals on named vendors — leadership departures, lawsuits, headcount trajectory, sentiment direction, news volume, glassdoor — and synthesizes them into a sourced narrative with a recommended action.
-- **The gap it claims.** GRC platforms watch paperwork; security raters watch the attack surface. Foreshock watches business-health signals — the leading indicators that precede vendor failure.
-- **Differentiation line in the demo.** "BitSight watches the security posture; Foreshock watches the business health. The layoff precedes the breach."
-- **Trust contract.** Every claim in an AI summary cites a numbered source, each citation resolves to a real `source_url` in the evidence list. Frontend renders `[N]` markers as anchor links to the source list; an audit visibly flags any unsourced claim.
+Source: ~5,400 lines (~3,000 Python backend / ~1,500 TS frontend / ~900 supporting scripts).
 
 ---
 
-## 2. Architecture at a glance
+## 1. Positioning (the gap being filled)
+
+Three adjacent categories — each watches the wrong thing for this use case:
+
+| Category | Examples | Watches | Misses |
+|---|---|---|---|
+| GRC platforms | OneTrust, Prevalent, ProcessUnity, Archer | Paperwork, registers, questionnaires | Real-time external reality |
+| Security raters | BitSight, SecurityScorecard, UpGuard, Black Kite | Attack surface, certs, breach proxies | Business-health deterioration |
+| Comp/CI tools | Owler, Crayon, Klue, Similarweb | Generic competitor news | GRC-shaped scoring + DORA artifacts |
+
+**Foreshock's lane.** Business-health signal monitoring + GRC-shaped output. Thesis: *the layoff precedes the breach.* Leadership turnover, lawsuits, hiring freeze precede vendor failure by weeks-to-months. No adjacent player watches them in a GRC context.
+
+**Demo line.** "BitSight watches the security posture; Foreshock watches the business health. The layoff precedes the breach."
+
+## 2. Audience
+
+Solo (or one-of-two) GRC/compliance lead at a mid-market fintech ($50M–$2B rev), managing 15–40 critical ICT vendors under DORA (or analogous regime). Currently spending ~5 hrs/week on manual vendor monitoring. Personal failure mode: post-incident "should have seen earlier."
+
+---
+
+## 3. Architecture at a glance
 
 ```
-                            ┌─────────────────────────────────────┐
-                            │       Bright Data MCP (cloud)       │
-                            │  search_engine / scrape_as_markdown │
-                            └────────────────┬────────────────────┘
-                                             │ (live mode only)
-                                             ▼
-   ┌─────────────────────┐     ┌──────────────────────────────────┐
-   │  fixtures/.json     │────▶│  capture.py  /  live_pull.py     │
-   │  (seeded mode)      │     │   - per-class queries            │
-   └─────────────────────┘     │   - row construction (Type 2)    │
-                               │   - optional validator callback  │
-                               └──────────────┬───────────────────┘
-                                              │  Type 2 append-only rows
-                                              ▼
-                               ┌──────────────────────────────────┐
-                               │      Airtable `signals` table    │
-                               │      (the only source of truth)  │
-                               └──────────────┬───────────────────┘
-                                              │  read on demand
-                                              ▼
-        ┌──────────────────────────────────────────────────────────────┐
-        │   scoring.py  →  alerts.py  →  summarizer.py  →  validator.py │
-        │   (CDC diff)    (convergence)   (Claude+trust)  (Claude gate) │
-        └──────────────────────────┬───────────────────────────────────┘
-                                   │  REST + SSE
-                                   ▼
-                          ┌─────────────────────┐
-                          │  FastAPI (main.py)  │
-                          │  /vendors           │
-                          │  /vendors/{name}    │
-                          │  /status            │
-                          │  /live-pull/stream  │  (SSE)
-                          │  /live-pull/reset   │
-                          │  /cache/.../clear   │
-                          └──────────┬──────────┘
-                                     │  via Vite /api proxy
-                                     ▼
-                       ┌─────────────────────────────┐
-                       │  React + TS + Tailwind UI   │
-                       │  Vite dev server :5173      │
-                       └─────────────────────────────┘
+┌──────────────┐    daily      ┌─────────────────────────────────┐
+│ Bright Data  │ ◀──── pull ──│  capture.py / observation.py    │
+│   MCP        │               │  (4 query classes/vendor)       │
+└──────────────┘               └────────────┬────────────────────┘
+                                            │ Type-2 rows
+                                            ▼
+                               ┌─────────────────────────────────┐
+                               │  validator.py (Claude YES/NO)   │
+                               │  drops false-positive events    │
+                               └────────────┬────────────────────┘
+                                            ▼
+                               ┌─────────────────────────────────┐
+                               │  Airtable signals table         │
+                               │  (append-only SCD)              │
+                               └────────────┬────────────────────┘
+                                            ▼
+                  ┌───────────────────────────────────────────────┐
+                  │  scoring.py — CDC diff + 5-component score    │
+                  │  alerts.py — convergence/threshold alerting   │
+                  │  summarizer.py — Claude + trust-audit         │
+                  └────────────────────────┬──────────────────────┘
+                                           ▼
+       ┌──────────────────────────────────────────────────────────┐
+       │  FastAPI (api.py, agent.py, live_pull.py, report.py)     │
+       │  REST + SSE endpoints                                    │
+       └────────────────────────┬─────────────────────────────────┘
+                                ▼
+               ┌──────────────────────────────────────┐
+               │  React dashboard                     │
+               │  grid · detail · flow · agent · PDF  │
+               └──────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Data model
+## 4. Tech stack
 
-### 3.1 Airtable `signals` table (the only persistent data)
+| Layer | Choice | Notes |
+|---|---|---|
+| Frontend | React + TS + Tailwind + shadcn primitives | Semantic tokens (`base`, `surface`, `signal-*`, `ink-*`, `rule`, `overlay-*`) |
+| Backend | FastAPI (Python 3.11) | uvicorn + WatchFiles; in-process summary cache |
+| AI | Anthropic SDK, `claude-sonnet-4-6` | Strict-JSON output, citation auditor, deterministic fallback |
+| Web data | Bright Data MCP (hosted, no local install) | `search_engine` + `scrape_as_markdown` (free tier, fast) + `web_data_*` (Pro tier) fallback |
+| Data | Airtable (`typecast=True` auto-extending selects) | Schema = Airtable; no migrations |
+| PDF | ReportLab + bundled TTFs | General Sans + Sometype Mono, no system font drift |
+| Hosting | Railway Hobby ($5/mo) | Always-on, no cold start |
+| Repo | GitHub public, MIT | github.com/eschaq |
 
-Every signal observation is a **new timestamped row** — Type 2 SCD; never overwritten. CDC diff is computed by comparing rows for the same `vendor_name + metric`.
+---
+
+## 5. Core capabilities (shipped)
+
+### 5.1 Continuous signal capture
+- 5 real vendors: **Stripe, Plaid, Snowflake, Twilio, AWS**; 1 demo: **Veridian Pay**
+- 4 query classes per vendor via Bright Data MCP `search_engine`: `news`, `lawsuit`, `layoff`, `leadership`
+- Recency-filtered (`after:2026-01-01`); disambiguated names (`"Stripe Inc."`, `"Amazon Web Services"`)
+- Fallback chain: structured `web_data_*` → `scrape_as_markdown` + Claude parse
+- Claude validator gates event candidates before Airtable write (17 of 19 false-positives rejected in recent run)
+
+### 5.2 Type-2 SCD history
+- Every reading appended as new timestamped row; never overwritten
+- Full historical reconstruction at any point in time
+- 127 rows live across 6 vendors
+
+### 5.3 CDC diff + weighted scoring
+- Latest-vs-prior per metric over 60-day window
+- 5-component score (0–100):
+  - **Leadership 30%** — 35 pts/event, 55 for C-suite (CEO/CTO/CFO/COO/CIO/chief), cap 100
+  - **Legal 25%** — 40 pts/event, cap 100
+  - **Headcount 20%** — linear in % decline (-5% = 50, -10% = 100)
+  - **Sentiment 15%** — window-avg of {-1, 0, +1} across news + reviews + glassdoor drop
+  - **News volume 10%** — label (low/normal/high/layoff) or numeric `(n-5)*10` cap 100
+- **State bands:** <30 stable / 30–60 warning / ≥60 critical
+- **Convergence count** = number of metrics with `deteriorating=true` simultaneously (drives alert type)
+
+### 5.4 Alerts
+- Stable → no alert
+- Warning + convergence ≥2 → convergence alert
+- Critical → convergence or single-metric alert
+- Alert carries full sourced evidence trail for downstream summary
+
+### 5.5 AI risk narratives — the trust contract
+- Claude Sonnet 4.6, GRC-analyst voice, **strict-JSON** output
+- Fields: `headline / sentiment_read / narrative / recommended_action`
+- **Every factual claim must carry `[N]` citation** to a numbered source URL
+- Post-parse **trust auditor** (`validate_citations`) parses every `[N]`/`[N,M]` marker, flags unresolved
+- Frontend renders valid citations as anchor links to source cards; unresolved render in **amber-dotted-underline** (visual hallucination flag)
+- Verified examples: Veridian (11 sources, 0 hallucinated, 100% coverage); Stripe (6/8 sources used, 0 hallucinated)
+- **Graceful degradation:** no API key or any error → deterministic summary, labeled `generated_by="deterministic-fallback"`
+
+### 5.6 DORA evidence PDF
+- One-click from any vendor detail panel: `GET /vendors/{name}/report.pdf`
+- ReportLab-rendered; bundled TTFs (no system-font drift)
+- Structure: amber disclaimer callout → header → risk narrative (with `[N]` citations) → component table → numbered sources list
+- Demo-source URLs flagged "(no public source — staged demo signal)" — honesty preserved on paper
+- The compliance artifact for "what did you know and when" auditor questions
+
+### 5.7 Live-pull demo flow (the hero moment)
+- Triggered by `Ctrl/Cmd+Shift+L` (or settings gear button)
+- SSE stream → FlowPanel renders per-event log (MCP call → result → row build → Airtable write → complete)
+- Two modes, settings-gear toggleable, URL-synced:
+  - **live** — real Bright Data MCP call (~2–4s, `data_path: "bright-data-mcp"`)
+  - **seeded** — cached fixture (~100ms, `data_path: "local-disk"`, labeled `"cached_replay"`)
+- Both paths land identical downstream effects (Type 2 rows → re-score → fresh Claude summary)
+- Veridian finale (lawsuit + CEO Marisha Chen departure) fires in either mode — score 68.2 → 81.2, convergence 5 → 6
+- Rehearsal cleanup: `POST /live-pull/reset` deletes only `live-pull-beat:`-tagged rows
+
+### 5.8 Unattended daily agent pipeline
+- `POST /agent/run` → async pipeline **Pull → Clean → Promote**
+- `GET /agent/stream/{job_id}` SSE stream renders per-stage progress in AgentPanel
+- PULL: all MCP calls for 5 real vendors + open_roles + Veridian staged beats
+- CLEAN: Claude validator drops false-positive events
+- PROMOTE: surviving rows Type-2-appended to Airtable
+- Railway cron-trigger ready (07:00 UTC)
+
+### 5.9 Fleet-level briefing
+- Header card above grid: 3–4 sentence Claude synthesis of all-vendor portfolio state
+- Labels AI origin explicitly (`"AI · synthesized from scored fleet state"` vs `"deterministic fallback"`)
+- Top border color reflects worst-vendor state (red > amber > teal)
+
+---
+
+## 6. Product surface
+
+### 6.1 Backend API (FastAPI on :8000)
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/` | GET | Health check |
+| `/vendors` | GET | Dashboard grid (all vendors, score + state + sparkline trajectory + components) |
+| `/vendors/{name}` | GET | Detail panel (overview + alert + AI summary + recent 40 signals) |
+| `/vendors/{name}/report.pdf` | GET | DORA evidence PDF |
+| `/fleet/summary` | GET | Fleet briefing (Claude-synthesized portfolio narrative) |
+| `/status` | GET | Activity indicator data (monitoring active, signal count, last capture) |
+| `/live-pull/stream?mode=live\|seeded` | GET | SSE stream of live-pull events |
+| `/live-pull/reset` | POST | Rehearsal cleanup |
+| `/cache/summaries/clear` | POST | Diagnostic cache flush |
+| `/agent/run` | POST | Kick off unattended daily pipeline (returns `job_id`) |
+| `/agent/stream/{job_id}` | GET | SSE stream of pipeline progress |
+
+### 6.2 Frontend (React + Tailwind on :5173)
+
+- **Dashboard grid** — 6 vendor cards (state pill, score, inline sparkline, convergence + signal count + capture date)
+- **Sparklines** — inline SVG; threshold guides at 30/60; draw-on animation (one-shot, `prefers-reduced-motion` honored); stroke color matches current state
+- **Fleet overview card** — Claude briefing above grid, AI-origin label visible
+- **Settings gear** — live/seeded mode toggle + reset button + shortcut hint; bound to `?mode=` URL param
+- **Activity indicator** — always-on pulsing dot + monitoring claim + last pull + signal count + trigger-mode color
+- **Risk scale legend** — header strip showing band thresholds
+- **Detail panel** — right-slide modal (320ms ease-out-quart): large score, components table, alert with cited narrative, trust-audit badge, numbered sources list, recent-signals table, DORA PDF download
+- **FlowPanel / AgentPanel** — SSE consumers; per-event log in monospace (only place Sometype Mono is used — reads as terminal output)
+- **Keyboard chord** `Ctrl/Cmd+Shift+L` — triggers agent pipeline
+
+---
+
+## 7. Data model
+
+**Airtable `signals` table** (Type 2 SCD, append-only):
 
 | Field | Type | Notes |
 |---|---|---|
-| `capture_date` | Date | ISO `YYYY-MM-DD` of capture |
-| `vendor_name` | Single line text | "Stripe", "Veridian Pay", etc. |
-| `vendor_type` | Single line text | "Payments", "Payments/BaaS", "Cloud Infra", etc. |
-| `metric` | Single select (auto-extending) | See §3.3 |
-| `value` | Single line text | Numeric or text; scoring tries float-parse first |
-| `unit` | Single line text | `score`, `count`, `event`, `employees`, `postings` |
-| `source_url` | URL | The trust-contract anchor |
-| `sentiment` | Single select | `positive` / `neutral` / `negative` (heuristic placeholder) |
-| `notes` | Long text | Free-form context; carries provenance tags |
+| `capture_date` | Date (ISO) | — |
+| `vendor_name` | Single line | "Stripe", "Veridian Pay", etc. |
+| `vendor_type` | Single line | "Payments", "Comms/2FA", etc. |
+| `metric` | Single select (auto-extending) | See vocabulary below |
+| `value` | Single line | Numeric or text; scorer float-parses first |
+| `unit` | Single line | `score`, `count`, `event`, `employees`, `postings` |
+| `source_url` | URL | Trust-contract anchor |
+| `sentiment` | Single select | `positive` / `neutral` / `negative` |
+| `notes` | Long text | Provenance prefixes: `[news]`, `[lawsuit]`, `[leadership]`, `[off-topic]`, `auto-detected:`, `validated:`, `audit-promoted:`, `live-pull-beat:`, `STUBBED` |
 | `is_demo_vendor` | Checkbox | True only for Veridian Pay |
 
-**Current row count: 127** (Stripe 37, Twilio 22, Plaid 20, Snowflake 20, AWS 15, Veridian 13). See §11 for the live scoreboard.
+**Metric vocabulary:** `headcount_linkedin`, `open_roles`, `glassdoor_rating`, `news_sentiment`, `sentiment_review`, `news_volume`, `leadership_change`, `legal_event`, `funding_event`, `outage_incident`.
 
-### 3.2 Vendor catalog
+**VendorOverview payload (dashboard):** `{name, type, is_demo, score, state, convergence_count, signal_count, latest_capture, trajectory[{date,score,state}], components[{name,score,weight,contribution,drivers}]}`.
 
-| Vendor | Type | Demo? | Notes |
-|---|---|---|---|
-| Veridian Pay | Payments/BaaS | ✓ | Fictional. Staged 30-day risk arc (4/23 → 5/21). Finale beat (lawsuit + 2nd C-suite exit) lands via live-pull, not staged. |
-| Stripe | Payments | — | Real. Includes one audit-promoted leadership_change (CTO Singleton, [fintechfutures.com](https://www.fintechfutures.com/fintech/stripe-cto-david-singleton-to-step-down-after-seven-years-to-start-own-company)). |
-| Twilio | Comms/2FA | — | Real. Holds 2 validated event rows (Missed Call LLC lawsuit + leadership transition) + 1 audit-promoted TCPA legal_event. |
-| Plaid | Bank Data | — | Real. No events; sentiment-driven. |
-| Snowflake | Data Infra | — | Real. No events; sentiment-driven. |
-| AWS | Cloud Infra | — | Real. No events; sentiment-driven. |
-
-Defined in two places (intentional — different concerns):
-- `foreshock/capture.py::REAL_VENDORS` — the 5 real for daily capture
-- `foreshock/api.py::DASHBOARD_VENDORS` — the 6 for the dashboard grid (adds Veridian, ordered for display)
-
-### 3.3 Metric vocabulary
-
-| Metric | Kind | How scored |
-|---|---|---|
-| `headcount_linkedin` | Numeric | % decline over window → 0-100 score |
-| `open_roles` | Numeric | Captured but not currently scored |
-| `glassdoor_rating` | Numeric | Absolute drop (oldest-vs-latest) folded into sentiment component |
-| `news_sentiment` | Numeric or sentiment label | Window-avg of {−1, 0, +1}; deteriorating if avg ≤ −0.2 |
-| `sentiment_review` | Numeric or sentiment label | Same mapping as news_sentiment |
-| `news_volume` | Numeric count or label | `low`/`normal`/`high`/`layoff news` → 0-3 score; numeric counts mapped via `(n−5)×10` capped 100 |
-| `leadership_change` | Event | Each event = 35 points; C-suite words (CEO/CTO/CFO/COO/CIO/chief) = 55. Capped 100. |
-| `legal_event` | Event | Each event = 40 points. Capped 100. |
-| `funding_event` | Event | Defined in scoring schema; not currently used |
-| `outage_incident` | Event | Adds 20/event to news_volume component |
-
-Defined in [`foreshock/scoring.py`](backend/foreshock/scoring.py): `NUMERIC_METRICS`, `SENTIMENT_METRICS`, `VOLUME_METRICS`, `EVENT_METRICS`.
-
-### 3.4 Notes-prefix taxonomy
-
-The `notes` field carries provenance prefixes used by validators, the audit pass, and the dashboard's optional detail view.
-
-| Prefix | Provenance | Used by |
-|---|---|---|
-| `[news]`, `[lawsuit]`, `[layoff]`, `[leadership]` | Query class that produced the row in daily capture | Set by `capture.py`; audited by `audit_signal_prefixes.py` |
-| `[off-topic]` | Audit verdict that vendor isn't the primary subject | Set by `audit_signal_prefixes.py` |
-| `auto-detected: ...` | Heuristic event-detector match (pre-validator era) | `capture.py` |
-| `validated (reason): ...` | Claude validator confirmed a candidate event | `capture.py` when `validator` callback present |
-| `audit-promoted (claude-validated): ...` | Manually promoted from sentiment row → event row, Claude-confirmed | One-off promotions for Stripe CTO + Twilio TCPA |
-| `live-pull-beat: ...` | Written by the demo's live-pull module | `live_pull.py`; targeted by `/live-pull/reset` |
-| `STUBBED ...` | Veridian's staged 30-day arc | Manually seeded once |
+**VendorDetail payload (drill-down):** VendorOverview + `alert` + `summary{headline,sentiment_read,narrative,recommended_action,citations[],generated_by}` + `recent_signals[40]`.
 
 ---
 
-## 4. Pipeline — stages in detail
+## 8. The trust contract (the key differentiator vs. generic AI tools)
 
-### 4.1 Capture (daily background) — [`foreshock/capture.py`](backend/foreshock/capture.py)
+The core objection to AI-in-compliance is "plausible but wrong." Foreshock's structural answer:
 
-For each of the 5 real vendors, fires 4 class-scoped Google `search_engine` calls via Bright Data MCP, recency-filtered with the Google `after:2026-01-01` operator (portable; doesn't depend on a tool-specific recency param).
-
-```python
-QUERY_CLASSES = [
-    {"class": "news",       "template": "{vendor} news"},
-    {"class": "lawsuit",    "template": "{vendor} lawsuit OR sued OR settles OR court"},
-    {"class": "layoff",     "template": '{vendor} layoffs OR "job cuts" OR "workforce reduction"'},
-    {"class": "leadership", "template": '{vendor} CEO OR CTO OR CFO OR chairman "steps down" OR resigns OR departs'},
-]
-```
-
-Per vendor per run, writes (Type 2 append):
-- `news_volume` row — total unique URLs across all 4 queries, with per-class breakdown in `notes`
-- ~20 `news_sentiment` rows (top 5 per class, deduped by URL, class prefix in `notes`)
-- `legal_event` / `leadership_change` event rows — **only if** a conservative pattern matcher fires (vendor name + role + departure verb / vendor + legal term in same blob) AND, if a `validator` callback is supplied, Claude confirms
-
-CLI: `scripts/run_daily_capture.py`. Latency: ~60–80s sequential (20 MCP calls × 2–4s).
-
-**Validator callback signature** (decoupled — `capture.py` doesn't import the Anthropic SDK):
-```python
-ValidatorFn = Callable[[str, str, str, str], tuple[bool, str]]
-                       # vendor, event_type, title, description -> (valid, reason)
-```
-
-### 4.2 Validation (event gate) — [`foreshock/validator.py`](backend/foreshock/validator.py)
-
-A tight Claude call with a hard YES/NO contract. Used in two places:
-- Inline in `capture.py` (when `validator` callback supplied — guards new event rows)
-- Post-hoc in `scripts/clean_todays_events.py` (cleaned today's noise: 17 rejected out of 19)
-
-Returns `ValidationResult(valid: bool, reason: str, raw: str)`. Strict JSON parse with code-fence stripping fallback. Parse errors → `valid=False`.
-
-Also exposes `classify_signal()` which returns one of `leadership | lawsuit | layoff | news | unrelated` — used by the prefix-audit pass.
-
-Model: `claude-sonnet-4-6` (spec'd in `MODEL` constant).
-
-### 4.3 Prefix audit — [`scripts/audit_signal_prefixes.py`](backend/scripts/audit_signal_prefixes.py)
-
-Walks every `news_sentiment` row whose notes are prefixed `[leadership]` or `[lawsuit]` (for real vendors), runs each through `classify_signal()`, and updates the prefix to match Claude's verdict. `unrelated` becomes `[off-topic]`. Run once already — 33 of 39 candidates were either reclassified to `[news]` (12) or marked `[off-topic]` (21); 6 confirmed correct. Cleans up the detail-view display without touching scoring.
-
-### 4.4 Scoring — [`foreshock/scoring.py`](backend/foreshock/scoring.py)
-
-Pure functions. Input: list of signal row dicts for one vendor. Output: `VendorRisk` dataclass.
-
-**CDC diff** (`build_diff`):
-- Groups rows by metric
-- For each metric: `latest`, `prior` (immediate predecessor), `oldest_in_window` (60-day window)
-- Numeric metrics → `numeric_delta` (latest−prior), `numeric_trajectory` (latest−oldest), `pct_trajectory`
-- Event metrics → `event_count_window`, `event_values[]`
-- Sentiment metrics → window-average mapped from labels {neg, neu, pos} → {−1, 0, +1}
-- Volume metrics → label scale 0–3 OR numeric count
-- Each metric flagged `deteriorating: bool` per metric-specific rule
-
-**Component scoring** (`score_vendor`):
-
-| Component | Weight | Logic |
-|---|---|---|
-| `leadership` | 0.30 | 35/event base, 55 for C-suite; capped 100 |
-| `legal` | 0.25 | 40/event; capped 100 |
-| `headcount` | 0.20 | Linear in `pct_trajectory`; −5% = 50, −10% = 100 |
-| `sentiment` | 0.15 | Average of news_sentiment + sentiment_review + glassdoor-drop scores |
-| `news_vol` | 0.10 | Latest news_volume value mapped to 0-100, plus outage bonus |
-
-**State bands** (`STABLE_MAX=30`, `WARNING_MAX=60`):
-- `score < 30` → stable
-- `30 ≤ score < 60` → warning
-- `score ≥ 60` → critical
-
-**Convergence count:** number of independent signal dimensions whose `deteriorating` flag is True. Drives the alert's `convergence` tag.
-
-**Source carrying:** `MetricDiff.sources: list[SourceRef]` captures every in-window row's `(capture_date, value, source_url, notes, sentiment)` so downstream consumers (alerts, summarizer) get the citation trail for free.
-
-### 4.5 Alerts — [`foreshock/alerts.py`](backend/foreshock/alerts.py)
-
-`evaluate_alert(VendorRisk) → Alert | None`:
-- `state == "stable"` → None
-- `state == "warning"` and `convergence_count >= 2` → `Alert(alert_type="convergence")` else None (single-metric warnings don't page)
-- `state == "critical"` → Alert with `alert_type="convergence"` if `>=2` dimensions deteriorating, else `single_metric`
-- `CONVERGENCE_MIN = 2` is the threshold
-
-Payload structure (`Alert` dataclass):
-```python
-{
-  vendor_name, fired_at, alert_type, state, score, threshold,
-  convergence_count,
-  signals: [ConvergenceSignal(metric, summary, latest_value, latest_date,
-                              source_urls[], evidence[{capture_date, value,
-                              source_url, notes, sentiment}])],
-  component_breakdown: [{name, score, weight, contribution, drivers[]}],
-  headline: "<one-liner>",
-}
-```
-
-The `evidence` carries the full sourced trail per signal — what step 4.6's Claude pass consumes.
-
-### 4.6 AI summary (with trust contract) — [`foreshock/summarizer.py`](backend/foreshock/summarizer.py)
-
-Consumes an `Alert` (the scored diff summary — never raw Airtable rows; CLAUDE.md §2 "summary-only pattern"). Produces a four-field GRC-analyst briefing with strict [N] citations.
-
-**Prompt skeleton** (system + user template):
-- System prompt instructs Claude: GRC analyst role, DORA awareness, **citations are not optional**, **no extrapolation**, claude is the sentiment authority (heuristic labels are noisy priors).
-- User template lays out: vendor, score, state, threshold, alert type, convergence count; then a numbered SIGNALS block; then a numbered SOURCES list (1..N) that the narrative must cite.
-- Claude returns strict JSON: `{headline, sentiment_read, narrative, recommended_action}`.
-
-**Output:** `RiskSummary` dataclass with `headline`, `sentiment_read`, `narrative`, `recommended_action`, `citations: list[Citation]`, `generated_by`, `parse_error`.
-
-**Trust-contract auditor:** `validate_citations(summary) → CitationAudit` — parses every `[N]` / `[N,M]` pattern from the four text fields, confirms each resolves to a real citation. Surfaces `invalid_ns` (hallucinations — should always be empty), `uncited_ns` (sources Claude didn't use), and per-field `citation_density`.
-
-**Graceful degradation:** No `ANTHROPIC_API_KEY` set, any Anthropic API error, any JSON parse error → returns a deterministic summary built from structured signals with `generated_by="deterministic-fallback"`. Pipeline never breaks.
-
-Model: `claude-sonnet-4-6`.
-
-Veridian narrative (critical) ran with 11 sources, 100% sourced. Stripe narrative (warning) with 6/8 sources used, 100% sourced. See [`scripts/test_summary.py`](backend/scripts/test_summary.py) for the verification harness.
-
-### 4.7 Live pull (demo act 2) — [`foreshock/live_pull.py`](backend/foreshock/live_pull.py)
-
-The demo's hero moment. Triggered by `Ctrl/Cmd + Shift + L` (frontend) or `scripts/run_live_pull.py` (CLI). Streamable via SSE.
-
-Two functions:
-- `run_live_pull(mode)` — single-shot, returns `LivePullResult`
-- `stream_live_pull(mode)` — async generator yielding per-step events (consumed by the SSE endpoint and the FlowPanel)
-
-**The mode switch** (the honesty boundary):
-
-```
-mode=live    → _fetch_organic_live()   → MCP search_engine call
-                                       → emits {mcp_call} + {mcp_result} events
-                                       → data_path: "bright-data-mcp"
-
-mode=seeded  → _fetch_organic_seeded() → reads foreshock/fixtures/seeded_real_pull.json
-                                       → emits {fixture_read} + {fixture_loaded} events
-                                       → label: "cached_replay"
-                                       → data_path: "local-disk"
-```
-
-**Downstream is identical for both modes.** Same `_real_vendor_rows_from_payload()`, same Veridian finale construction (`_veridian_finale_rows()`), same Airtable write.
-
-**Veridian finale (scripted, hardcoded — fires in both modes):**
-- `legal_event`: "Class action filed against Veridian Pay over alleged customer data exposure" → source_url `DEMO-SCENARIO-FINALE`
-- `leadership_change`: "Veridian Pay CEO Marisha Chen departs" → source_url `DEMO-SCENARIO-FINALE`
-
-**Provenance tag:** every row written by this module is tagged `live-pull-beat:` in `notes`. `reset_live_pull_rows()` deletes exactly those rows. Rehearsal-safe.
-
-**Save-seed:** `--live --save-seed` captures the live MCP response and overwrites the seeded fixture, so subsequent `--seeded` runs replay a real recent pull.
-
-**Veridian impact:** 68.2 → 81.2 (+13). Convergence 5 → 6. Legal component lights up from 0 → 10.0. Same delta in both modes (Veridian finale is identical).
+1. **AI never sees raw rows** — only the scored diff summary (summary-only pattern)
+2. **Every claim must cite** — system prompt enforces, validator audits, frontend visually flags unresolved
+3. **Numbered sources panel** — every `[N]` in narrative links to a numbered card with metric + capture_date + snippet + URL
+4. **Demo data flagged** — staged Veridian signals show "(no public source — staged demo signal)" in UI + PDF
+5. **Deterministic fallback** — when AI unavailable, summary still ships, labeled `generated_by="deterministic-fallback"`
+6. **Honesty boundary in live-pull** — SSE `data_path` field distinguishes `bright-data-mcp` from `local-disk` replay; frontend cannot fake events
 
 ---
 
-## 5. Backend API surface
+## 9. Honesty boundaries (built-in, not bolted on)
 
-FastAPI app in [`backend/main.py`](backend/main.py). CORS open (will tighten for prod). All endpoints are GET unless noted.
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| GET | `/` | Health check |
-| GET | `/vendors` | Dashboard grid payload — array of `VendorOverview`. Computes risk score, state, convergence, sparkline trajectory (per-historical-capture-date scoring), component breakdown. |
-| GET | `/vendors/{name}` | Detail panel payload: overview + alert envelope + cached AI summary (regenerates if cache key changed) + recent_signals[40]. Optional `?refresh=true` busts the cache. |
-| GET | `/status` | Activity-indicator data: `monitoring_active`, `vendor_count`, `signal_count_total`, `last_capture`, `live_pull_query`, `live_pull_vendor`. |
-| GET | `/live-pull/stream?mode=live\|seeded` | SSE stream of the live-pull events (text/event-stream). Mode controls fetch source; emits honest mode-specific events. |
-| POST | `/live-pull/reset` | Deletes every row tagged `live-pull-beat:`. Returns `{deleted: N}`. |
-| POST | `/cache/summaries/clear` | Empties the in-memory summary cache. Mostly diagnostic — cache auto-invalidates via key. |
-
-### 5.1 Summary cache
-
-In-process dict in [`foreshock/api.py`](backend/foreshock/api.py), `Lock`-guarded. Keyed by `(vendor_name, latest_capture_date, signal_count)` — the `signal_count` ensures new rows (from live pull or daily capture) auto-invalidate without manual busting.
-
----
-
-## 6. Frontend
-
-Stack: React 18 + TypeScript + Vite 5 + Tailwind 3. No shadcn CLI install yet — primitives written by hand in shadcn style so an `npx shadcn add` pass can layer cleanly during act 8.
-
-Vite dev server at `:5173`. Vite proxy: `/api/*` → `http://127.0.0.1:8000/*`. No CORS issues in dev.
-
-### 6.1 Component tree
-
-```
-App.tsx
-├── header
-│   ├── title + tagline
-│   ├── tally (n critical · n warning · n stable)
-│   └── SettingsGear (⚙)
-│       └── dropdown: LIVE/SEEDED toggle + shortcut + reset
-│   └── (second row)
-│       ├── RiskScale (legend: 0–30 / 30–60 / 60–100)
-│       └── ActivityIndicator (● monitoring active · last pull · n signals · trigger:mode)
-│
-├── main grid (3-col on lg, 2-col on md, 1-col on sm)
-│   └── VendorCard × 6
-│       ├── name + type + (demo) tag
-│       ├── StateBadge
-│       ├── score (mono, 3xl, tabular-nums)
-│       ├── Sparkline (inline SVG, threshold guides @30/@60)
-│       └── footer: convergence · signal count · latest capture
-│
-├── DetailPanel (slide-in from right, max-w-3xl)
-│   ├── header (vendor name, larger sparkline)
-│   ├── score components table (5 rows)
-│   ├── AI risk summary block (when alert fired)
-│   │   ├── trust-contract audit badge
-│   │   ├── headline, sentiment_read, narrative paragraphs, recommended_action
-│   │   │   (all rendered via CitedText — [N] → anchor links)
-│   │   └── sources list (numbered, each with metric, capture_date, note, source_url)
-│   └── recent_signals table (40 rows)
-│
-└── FlowPanel (modal, ctrl/cmd+shift+L)
-    ├── header (teal "Bright Data MCP — live capture" OR amber "Cached replay")
-    ├── event log (streamed via EventSource)
-    │   └── mode-specific rows: mcp_call, mcp_result, fixture_read,
-    │       fixture_loaded, rows_built, airtable_write, complete
-    │       (complete row has dynamic suffix per refreshPhase)
-    └── footer (kbd hint, close button)
-```
-
-### 6.2 Brand palette (semantic Tailwind tokens)
-
-From CLAUDE.md §8, wired in [`tailwind.config.js`](frontend/tailwind.config.js):
-
-| Token | Hex | Use |
-|---|---|---|
-| `base` | `#0A0C12` | page background |
-| `surface` | `#161B2B` | card background |
-| `signal-blue` | `#3B82F6` | brand / calm / citation anchors |
-| `signal-teal` | `#3FB8AF` | stable / live mode |
-| `signal-amber` | `#FFAA33` | warning / seeded mode |
-| `signal-red` | `#FF5247` | critical |
-| `ink-primary` | `#EEF1F8` | primary text |
-| `ink-muted` | `#9AA3B8` | secondary text |
-| `ink-dim` | `#5A6178` | tertiary / hint text |
-
-All state pills, the risk-scale legend, the activity indicator, the FlowPanel header, and the settings-gear mode toggle reference these same tokens — color coherence is enforced by Tailwind class reuse, not by manual copy-paste.
-
-### 6.3 Trigger mode + URL sync
-
-- **Initial mode** read from `?mode=live|seeded` (default `live`)
-- **Settings gear** toggles via `handleModeChange(mode)` → `setTriggerMode(mode)` + `history.replaceState` updates URL
-- **Activity indicator** colors the trigger-mode label teal (live) or amber (seeded) — glanceable confirmation
-- **FlowPanel** consumes the current mode when the chord fires; SSE URL built as `/api/live-pull/stream?mode={mode}`
-
-### 6.4 Trust-contract rendering ([`components/CitedText.tsx`](frontend/src/components/CitedText.tsx))
-
-Regex-parses `\[(\d+(?:\s*,\s*\d+)*)\]` in any text. For each citation:
-- Resolves to `citations.find(c => c.n === N)` (memoized Map)
-- Renders as anchor link to `#source-{n}` (jumps to the numbered source card below)
-- Hover title shows `metric · source_url`
-- Unresolved citation indices render in `signal-red` with dotted underline (would expose hallucinations — currently always zero)
-
-### 6.5 Refresh lifecycle ([`components/FlowPanel.tsx`](frontend/src/components/FlowPanel.tsx))
-
-```
-SSE "complete" event arrives
-   ↓ 350ms beat (lets operator see the "complete" line)
-setRefreshPhase("refreshing")    suffix: "— refreshing dashboard…" (pulsing italic)
-   ↓
-await onComplete()               App.tsx refetches /vendors + /status,
-                                 vendor cards re-render in state
-   ↓
-setRefreshPhase("updated")       suffix: "— dashboard updated ✓" (bright mode-color)
-                                 overlay: bg-black/80 → bg-black/30
-                                          (700ms CSS transition — cards visible behind)
-   ↓ 2500ms
-setConfirmFaded(true)            suffix opacity fades to dim grey (700ms)
-                                 panel stays open until operator closes
-```
-
-This was a fix in step 7.6 — the original implementation had the suffix hardcoded so the indicator never resolved.
-
----
-
-## 7. Honesty & trust contracts (what's enforced where)
-
-### 7.1 The trust contract (every AI claim is sourced)
-
-- **Backend enforces structure:** `summarizer.py` builds a numbered SOURCES list before the prompt is sent; the prompt's strict JSON schema demands [N] markers; `validate_citations()` post-parse audits.
-- **Frontend enforces visibility:** `CitedText` renders [N] as anchor links; `DetailPanel` shows the audit badge (✓ all claims sourced / ✗ N unsourced); unresolved citations render in red.
-- **Verified:** Veridian narrative — 11 sources cited, 0 hallucinated. Stripe narrative — 6/8 sources used, 0 hallucinated.
-
-### 7.2 The honesty contract (live vs seeded must not be lied about)
-
-- **The boundary lives in `live_pull.py::stream_live_pull`** — distinct event types per mode (`mcp_call`/`mcp_result` vs `fixture_read`/`fixture_loaded`).
-- **The events carry the truth:** `data_path: "bright-data-mcp"` vs `data_path: "local-disk"`, and a `label: "cached_replay"` marker for seeded events.
-- **Frontend renders whatever arrives** — it cannot fake events because the SSE event source is the truth.
-- **The mode label is glanceable:** activity indicator + FlowPanel header both color-code to mode (teal vs amber).
-- **The seeded-mode FlowPanel header explicitly says** "Cached replay — network not used", with subtitle pointing at `?mode=live` for the real path.
-
-### 7.3 Event validation (no false-positive events in the schema)
-
-- **Capture-time:** `capture.py`'s conservative pattern matcher casts a wide net; optional `validator` callback (Claude) gates which candidates become event rows. False-positive rate empirically high without the validator (e.g., "Stripe Communications" PR agency, Twilio CFO share sales, Snowflake CEO pay disclosures — all caught and rejected).
-- **Post-hoc:** `clean_todays_events.py` validates already-banked event rows and deletes rejects. Verified: 17 of 19 candidates rejected with reasons.
-- **Audit pass:** `audit_signal_prefixes.py` reclassifies misleading `[leadership]`/`[lawsuit]` notes prefixes on sentiment rows — they don't drive scoring but would mislead a detail-view consumer.
-
----
-
-## 8. Demo wiring (acts 1–5 from CLAUDE.md §5)
-
-### 8.1 Operator playbook
-
-1. **Pre-show:** `python scripts/run_live_pull.py --reset` to clean up any rehearsal rows.
-2. **Browser:** open `http://localhost:5173`. Confirm activity indicator shows `trigger: live` (teal).
-3. **Act 1 (15s):** narrate the 6-vendor grid. Veridian critical, gradation through Twilio/Stripe warning to Plaid/Snowflake/AWS stable.
-4. **Act 2 (30–45s):** press `Ctrl/Cmd + Shift + L`. FlowPanel opens; SSE stream shows real Bright Data MCP call to `search_engine` for Stripe, results count + duration, then row construction + Airtable write + Veridian finale. On `complete`, overlay fades, Veridian visibly ticks up to 81.2.
-5. **Act 3 (20s):** close flow panel; Veridian's sparkline shows the spike, legal dimension lights up, convergence chip reads 6.
-6. **Act 4 (30s):** click Veridian → Claude generates summary live (~5–15s, sourced); narrative now references the lawsuit + CEO Marisha Chen departure with anchor-linked citations.
-7. **Act 5 (15s):** close detail panel; close the gear-driven seeded fallback narrative (gear → SEEDED toggle; press chord again → cached replay path runs the same flow).
-
-### 8.2 Network failure fallback
-
-- Click gear → toggle `SEEDED`. Activity indicator flips to amber `trigger: seeded`.
-- Chord fires the cached path. FlowPanel header reads "Cached replay — network not used" in amber; events labeled `cached_replay`.
-- Veridian still escalates to 81.2 (finale rows are scripted), but the audience sees the truth about the data source.
-
-### 8.3 Rehearsal cycle
-
-- `python scripts/run_live_pull.py --reset` OR gear → "reset live-pull rows" button. Both POST `/live-pull/reset`. Deletes rows tagged `live-pull-beat:` only; doesn't touch the staged Veridian arc, audit-promoted rows, or historical capture data.
-
----
-
-## 9. File inventory
-
-### Backend (Python, FastAPI)
-
-| File | LOC | Purpose |
-|---|---|---|
-| [`main.py`](backend/main.py) | ~70 | FastAPI app, endpoints, SSE wiring |
-| [`foreshock/api.py`](backend/foreshock/api.py) | 237 | Vendor overview + detail + trajectory + cache |
-| [`foreshock/alerts.py`](backend/foreshock/alerts.py) | 188 | `Alert` dataclass + `evaluate_alert()` |
-| [`foreshock/capture.py`](backend/foreshock/capture.py) | 293 | Per-class queries, MCP calls, row construction, optional validator callback |
-| [`foreshock/live_pull.py`](backend/foreshock/live_pull.py) | 437 | Hero pull + the live/seeded switch + streaming generator |
-| [`foreshock/scoring.py`](backend/foreshock/scoring.py) | 440 | CDC diff + weighted-component scoring (pure functions) |
-| [`foreshock/summarizer.py`](backend/foreshock/summarizer.py) | 406 | Claude summary call + trust-contract auditor + deterministic fallback |
-| [`foreshock/validator.py`](backend/foreshock/validator.py) | 197 | `validate_event()` + `classify_signal()` — tight Claude calls |
-
-### Backend scripts (CLIs / one-offs)
-
-| Script | Purpose |
+| Surface | Honesty mechanism |
 |---|---|
-| `run_daily_capture.py` | Pulls all 5 real vendors via 4 query classes; APPEND-writes Type 2 rows |
-| `run_live_pull.py` | CLI of the live/seeded/reset/dry-run paths; mirrors the chord trigger |
-| `clean_todays_events.py` | Post-hoc Claude validation of today's banked event rows (deletes rejects) |
-| `audit_signal_prefixes.py` | Reclassifies misleading `[leadership]`/`[lawsuit]` notes prefixes |
-| `whatif_promote_events.py` | In-memory simulation of "what if we promoted these untagged events?" |
-| `test_scoring.py` | Pipeline smoke test: scoring on Veridian (critical) + Stripe (stable then warning) |
-| `test_alerts.py` | Smoke test: alert payload structure on Veridian + Stripe |
-| `test_summary.py` | Smoke test: full Claude summary + trust-contract audit on Veridian + Stripe |
-| `test_brightdata_mcp.py` | First-contact verification of the MCP connection |
-| `test_airtable_write.py` | First-contact verification of Type 2 append-write |
-| `test_recency_filter.py` | Verifies the `after:` recency filter returns 2026-era results |
-
-### Frontend (React, TypeScript)
-
-| File | LOC | Purpose |
-|---|---|---|
-| `App.tsx` | 146 | Top-level: state, keyboard chord, header layout, modal coordination |
-| `main.tsx` | 10 | ReactDOM bootstrap |
-| `types.ts` | 101 | TypeScript types incl FlowEvent union (the honesty schema in type form) |
-| `lib/api.ts` | 30 | Typed fetch helpers (vendors, detail, status, SSE URL builder) |
-| `components/VendorCard.tsx` | 59 | Card on the grid |
-| `components/StateBadge.tsx` | 20 | Color-coded state pill |
-| `components/Sparkline.tsx` | 104 | Inline SVG trajectory; threshold guides at 30/60 |
-| `components/CitedText.tsx` | 68 | Renders `[N]` markers as anchor links + validates resolution |
-| `components/DetailPanel.tsx` | 299 | Slide-in vendor detail with AI summary, sources, recent signals |
-| `components/RiskScale.tsx` | 52 | Header legend: 0–30 stable / 30–60 warning / 60–100 critical |
-| `components/ActivityIndicator.tsx` | 46 | Always-on "monitoring active" + last pull + trigger mode |
-| `components/FlowPanel.tsx` | 440 | SSE consumer, mode-honest event log, refresh lifecycle |
-| `components/SettingsGear.tsx` | 201 | Mode toggle + shortcut reminder + reset button |
-
-### Other
-
-- `CLAUDE.md` — build context / product knowledge (was created on build day 1; still source of truth for product vision and roadmap-not-yet-built)
-- `SPEC.md` — *this file*
-- `README.md` — minimal scaffolding
-- `LICENSE` — MIT
-- `backend/.env` — `BRIGHTDATA_API_TOKEN`, `AIRTABLE_API_KEY`, `AIRTABLE_BASE_ID`, `ANTHROPIC_API_KEY` (gitignored)
-- `backend/foreshock/fixtures/seeded_real_pull.json` — cached MCP response for `--seeded` mode (currently holds 9 real Stripe news hits from a `--save-seed` run)
+| AI summary | Trust-contract auditor + visual unresolved-citation marker |
+| Demo vendor | `is_demo_vendor` flag; UI badge; PDF disclaimer; staged sources flagged |
+| Live vs seeded mode | SSE event `data_path` field; settings-gear toggle; URL param; color-coded mode label |
+| AI vs deterministic | `generated_by` field on summary; fleet briefing label "AI · synthesized" vs "deterministic fallback" |
+| PDF | Amber disclaimer callout on page 1 ("Example output — illustrative only") |
+| Off-topic capture | `[off-topic]` prefix on notes (e.g. "Stripe Communications" PR agency, "Tim Cook" for AWS) |
 
 ---
 
-## 10. External integration points
-
-| System | How we talk to it | What it returns |
-|---|---|---|
-| **Bright Data MCP** (hosted) | `streamablehttp_client(https://mcp.brightdata.com/mcp?token=...)` + `mcp.ClientSession` | `search_engine` results (organic) as JSON-in-text-block; ~2–4s |
-| **Airtable** | `pyairtable.Api(...).table(base, "signals")` with formula filters | Type 2 rows |
-| **Anthropic** | `anthropic.Anthropic(api_key=...)` → `client.messages.create(...)` | Sonnet-4.6 responses, strict JSON in practice |
-
-`.env` keys live in `backend/.env`. Both Bright Data and Anthropic have been verified live; Airtable is the system of record.
-
----
-
-## 11. Current data state (the live scoreboard)
+## 10. Current live scoreboard (2026-05-27)
 
 ```
 vendor          score    state      conv   signals   notable
-─────────────────────────────────────────────────────────────────────────────────────────
-Veridian Pay    68.2     CRITICAL    5      13        staged 30-day arc; finale lands via live-pull
-Twilio          49.5     WARNING     4      22        2 validated events + 1 audit-promoted TCPA
-Stripe          35.9     WARNING     3      37        1 audit-promoted CTO Singleton departure
-Plaid           20.8     STABLE      2      20        sentiment + news_vol only
-Snowflake       18.9     STABLE      1      20        sentiment + news_vol only
-AWS             16.6     STABLE      2      15        sentiment + news_vol only
-─────────────────────────────────────────────────────────────────────────────────────────
+─────────────────────────────────────────────────────────────────────────────────
+Veridian Pay    68.2     CRITICAL    5      13        staged arc; finale via live-pull
+Twilio          49.5     WARNING     4      22        2 validated + 1 audit-promoted event
+Stripe          35.9     WARNING     3      37        1 audit-promoted CTO Singleton
+Plaid           20.8     STABLE      2      20        sentiment + volume only
+Snowflake       18.9     STABLE      1      20        sentiment + volume only
+AWS             16.6     STABLE      2      15        sentiment + volume only
+─────────────────────────────────────────────────────────────────────────────────
                                             127 rows total
 ```
 
-**After a live pull lands:**
-- Veridian → 81.2 (CRITICAL, conv=6, legal_event count 0→1, +13.0 to score)
-- Real-vendor data appends to whichever vendor was the live-pull target (Stripe by default)
+After live-pull: Veridian → 81.2 (CRITICAL, conv=6, legal_event 0→1, +13.0 to score).
 
 ---
 
-## 12. Known limitations + quirks
+## 11. Current limitations (honest gaps)
 
-### 12.1 Capture
-- **`[news]` query template returns 0 hits for some vendors** (Plaid, Twilio, AWS in the last run). The bare `{vendor} news after:2026-01-01` gets squeezed out by Google's news vertical. The other 3 classes carry the volume. Logged as roadmap in CLAUDE.md §11a.
-- **Bare-name vendor queries pull noise.** Stripe queries pulled "Stripe Communications" (PR agency); AWS pulled "Tim Cook"; Plaid pulled "Zimmer Biomet". Mitigated by the Claude validator + the prefix audit. Logged as roadmap in CLAUDE.md §11a (use `"Stripe Inc."` / `"Amazon Web Services"` disambiguators).
-- **`LEADERSHIP_VERBS` only matches conjugated forms** (`steps down`, not `step down`). The Stripe CTO Singleton announcement said "to step down" and was missed by the heuristic — caught only by the audit pass. Logged as roadmap.
+### Capture
+- News volume queries return 0 for some vendors (Plaid, Twilio, AWS) — Google News vertical thin on bare-name searches
+- `LEADERSHIP_VERBS` only matches conjugated forms (`steps down`) — misses infinitive (`to step down`); audit pass catches what live capture misses
+- Bare-name queries pull noise; mitigated by Claude validator + post-hoc prefix audit, not by query design
 
-### 12.2 Scoring
-- **`open_roles` metric is captured but never scored.** Schema-aware but no component reads it yet.
-- **`funding_event` metric defined but never observed in current data.** Schema-aware.
-- **News volume scoring asymmetry:** label "layoff news" maps to score 99; numeric count 8 maps to score 30. If a vendor's latest news_volume changes from label to count (or vice versa), the diff would show a drop where there isn't one. Currently happens only for Veridian (label) vs everyone else (count).
-- **Sentiment heuristic is keyword-based** — placeholder per CLAUDE.md §1. Claude owns sentiment in the AI summary layer; the keyword scores are noisy priors only.
+### Scoring
+- `open_roles` captured but not yet scored (component slot reserved)
+- `funding_event` defined but never observed
+- News-volume asymmetric: label `"layoff news"` = 99; numeric count of 8 = 30; mode-switching label↔count shows phantom drops
+- Sentiment heuristic keyword-based (placeholder); Claude replaces in summary narrative
 
-### 12.3 Summary cache
-- **In-process dict** — restart loses cache. Fine for single-instance demo; production would want Redis.
-- **Cache invalidation is by key** (`(name, latest_capture, signal_count)`). New rows auto-invalidate. But the cache grows over a long session — no eviction. Demo lifespan only.
-
-### 12.4 Live pull
-- **Idempotency via tag-then-reset**, not via unique IDs. Re-running live-pull duplicates Veridian finale rows. Reset works by tag prefix.
-- **`run_live_pull` and `stream_live_pull` duplicate some orchestration code.** Refactor candidate — share an `_execute_pull(on_event_callback)` core.
-- **Live MCP results can return 0** under rate-limiting (seen during back-to-back testing). The flow reports 0 honestly; downstream still works (no sentiment rows, just the news_volume row + Veridian finale).
-
-### 12.5 Frontend
-- **No real-time push** — dashboard polls on user-driven refresh (vendor click, page reload, live-pull completion). No websocket.
-- **Detail panel doesn't auto-refresh when underlying data changes** — closes/reopens require a click.
-- **Settings gear closes on outside-click and Esc**, but doesn't sync mode back from URL after the user manually edits the address bar (one-way: gear → URL).
-- **Sparkline anchors max to 60** (so the critical band is always visible on the y-axis) — vendors that breach 60 (Veridian) will show their topmost point right at the chart top edge. Visually fine.
-
-### 12.6 Trust contracts
-- **The "audit-promoted" rows use real source URLs** (FinTech Futures for Singleton; JD Supra for TCPA) — verified manually. The Labaton Reddit thread was intentionally NOT promoted (soft source).
-- **DEMO-SCENARIO and DEMO-SCENARIO-FINALE source_urls** in the Veridian rows are flagged in the UI as "(no public source — staged demo signal)". Trust contract still works — citations resolve to these entries; they just don't have clickable external links.
-
-### 12.7 Operational
-- **Both dev servers must be running for the demo:** `uvicorn` on `:8000`, Vite on `:5173`. No production deploy yet (CLAUDE.md mentions Railway hobby tier as the target — not provisioned).
-- **No CI / no tests** — the `scripts/test_*.py` files are smoke runners, not unit tests. No CI pipeline.
-- **No DB migrations / no schema management** — Airtable is the schema, and `typecast=True` on writes auto-extends single-select fields.
+### Operational
+- No real-time push to frontend — refresh required after capture
+- In-process summary cache (no Redis); cache grows unbounded over long sessions
+- Detail panel doesn't auto-refresh after live-pull
+- Live-pull idempotency via tag-then-reset, not unique IDs — re-running duplicates Veridian finale rows
+- No CI / no unit tests (only `scripts/test_*.py` smoke runners)
+- No DB migrations (Airtable IS the schema; auto-extending selects via `typecast=True`)
 
 ---
 
-## 13. What's deliberately NOT built (out of scope by design)
+## 12. Explicitly out of scope (roadmap-only, not built)
 
-Per CLAUDE.md §9 (Scope Guardrails):
+Per CLAUDE.md scope guardrails — useful for moat analysis to know what we deliberately don't compete on:
 
-**Not in MVP (in roadmap):**
-- Other monitoring modules (competitor / supplier / M&A target)
-- DORA register auto-generation
-- Questionnaire / GRC workflow (OneTrust's lane)
-- Security scoring (BitSight's lane)
-- Multi-target comparison
-- Team accounts / RBAC
+- Other monitoring modules (competitor / supplier / M&A target) — same engine, different entity class
+- DORA register auto-generation (one-off PDF export only ships)
+- Questionnaire / vendor onboarding workflow — OneTrust's lane
+- Security scoring (CVE, cert hygiene, attack-surface metrics) — BitSight's lane
+- Multi-target side-by-side comparison
+- Team accounts / RBAC / SSO
 - Automated historical backfill
-
-**Build sequence remaining:**
-- **Step 8** — Reskin pass (typography that isn't an AI-default tell, motion, seismograph motif as logo, proper density tuning, hover/focus states). Stack: UI/UX Pro Max skill, Anthropic frontend-design skill, Vercel web-design-guidelines skill.
-- **Step 9** — Record the demo video (acts 1–5, clean genuine-live take, <5min, <300MB).
+- Webhooks / Slack notifications / email digests
+- API for external consumers (read-only, internal-only currently)
 
 ---
 
-## 14. Enhancement-planning hooks
+## 13. Candidate moats (hypotheses for the competitor sweep to validate)
 
-Some places where extension is natural:
+Pre-analysis bets. Test each against actual incumbent depth in §1.
 
-- **New metric** → add to one of the four metric-class sets in `scoring.py` + a component (or fold into existing component). The diff logic auto-picks it up.
-- **New query class** → add to `QUERY_CLASSES` in `capture.py`; row construction generalizes.
-- **New vendor** → add to `REAL_VENDORS` (capture) and `DASHBOARD_VENDORS` (api). The validator + scoring + summary pipeline doesn't need to know vendor names.
-- **New event detector** → add `_detect_xxx()` predicate + the loop in `capture_vendor` (already factored into a tuple-driven loop in step 4.6).
-- **Tighten/widen the Claude validator** → edit `_PROMPT` constant in `validator.py`. Both `validate_event` and `classify_signal` share the same model and JSON-strict pattern.
-- **Add an alert delivery channel** (email, slack) → `evaluate_alert` returns an `Alert` dataclass; wire a new consumer that subscribes to alerts. Currently only the dashboard consumes them.
-- **Pre-cache summaries** for the dashboard's stable-vendors on startup → call `vendor_detail(name, force_refresh=True)` for each in a startup task. Currently lazy on click.
-- **Persist summary cache to disk** → swap the in-process dict in `api.py` for a file-backed key-value store. Cache key already includes signal count.
-- **Multi-tenant signals table** → add a `tenant_id` field everywhere; Airtable formula filters extend trivially.
+1. **The business-health signal category itself.** Adjacent players don't watch leadership / legal / hiring as a coherent risk feed. Is there a pure-play vendor-business-health monitor in market? Suspect: not in GRC shape.
+2. **The trust contract pattern.** AI summary + numbered citations + post-parse validator + visual unresolved-marker. Most AI compliance tools currently ship plausible-but-unsourced narratives. Mechanically copyable but requires opinionated design discipline.
+3. **DORA evidence PDF as one-click artifact.** Most GRC tools require composing reports manually. "Article 28 paper trail in one click" is concrete and on-trend (DORA enforceable Jan 2025). Do OneTrust / Prevalent ship anything analogous?
+4. **Convergence-based alerting (not single-signal trips).** Multiple deteriorating dimensions crossing simultaneously is the actually-rare event; single signals are noisy. Suspect this is novel in GRC vendor monitoring specifically.
+5. **Type-2 SCD on business signals.** Full historical reconstruction supports "what did you know and when" auditor questions. GRC platforms do this for paperwork; nobody does it for business signals.
+6. **Honesty boundaries as a productized aesthetic.** Demo vs. real flag, live vs. cached mode flag, AI vs. deterministic label, source vs. demo-source flag — built into UI / PDF / SSE. Hard to retrofit; easy to differentiate on.
+7. **Bright Data MCP integration depth.** All 4 actions (Discover, Access, Navigate, Extract) wired with graceful tier fallback. Compounds as Bright Data tooling expands.
 
 ---
 
-## 15. Run book
+## 14. Questions to drive the competitor sweep
 
-### Dev mode
+- Which incumbents ship cited AI narratives (vs. plausible-but-unsourced)? Who has a trust contract pattern in production?
+- Which adjacent tools watch leadership / legal / hiring signals — and how do they score / present them?
+- Who ships DORA Article 28-shaped one-click evidence exports?
+- Does "vendor business intelligence" exist as a named category — distinct from "vendor security risk" and "competitive intelligence"?
+- Where does Owler/Crayon overlap with TPRM, and why has nobody bridged them?
+- What's the going price point for vendor monitoring at this scope? (informs WTP for solo GRC lead)
+- Which categories do mid-market fintechs already buy from — and where would Foreshock land in their procurement diagram?
+- Who else uses Type-2 SCD for vendor signals? (suspect: nobody — it's standard for paperwork registers but not signals)
 
-```bash
-# Backend
-cd backend
-.venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+---
 
-# Frontend
-cd frontend
-npm install
-npm run dev   # serves at :5173 with /api proxy to :8000
-```
+## 15. File inventory (for the curious)
 
-### Common operations
+**Backend Python** (`backend/foreshock/`):
 
-```bash
-# Daily capture (all 5 real vendors)
-cd backend && .venv/bin/python scripts/run_daily_capture.py
-
-# Validate today's banked events
-.venv/bin/python scripts/clean_todays_events.py --dry-run
-.venv/bin/python scripts/clean_todays_events.py
-
-# Audit signal prefixes
-.venv/bin/python scripts/audit_signal_prefixes.py --dry-run
-.venv/bin/python scripts/audit_signal_prefixes.py
-
-# Live pull (CLI mirror of the chord)
-.venv/bin/python scripts/run_live_pull.py --seeded            # demo safety
-.venv/bin/python scripts/run_live_pull.py --live              # genuine pull
-.venv/bin/python scripts/run_live_pull.py --live --save-seed  # capture fixture
-.venv/bin/python scripts/run_live_pull.py --reset             # rehearsal cleanup
-
-# Verify scoring on a vendor
-.venv/bin/python scripts/test_scoring.py
-
-# Run AI summary verification + citation audit
-.venv/bin/python scripts/test_summary.py
-```
-
-### Reset paths (in order of bluntness)
-
-| Action | Effect | Where |
+| File | LOC | Purpose |
 |---|---|---|
-| Settings gear → "reset live-pull rows" | Deletes `live-pull-beat:` tagged rows | UI |
-| `python scripts/run_live_pull.py --reset` | Same | CLI |
-| `POST /live-pull/reset` | Same | API |
-| `POST /cache/summaries/clear` | Empties in-memory AI summary cache | API (rarely needed — auto-invalidates by key) |
-| Manual Airtable row deletes | Last resort — be careful with the staged Veridian arc | Airtable UI |
+| `api.py` | 237 | Dashboard payload builders; vendor overview/detail; summary cache |
+| `alerts.py` | 188 | Alert evaluation; convergence detection |
+| `capture.py` | 293 | Daily MCP capture; 4 query classes; Type-2 row construction |
+| `live_pull.py` | 437 | Hero live/seeded pull; Veridian finale; SSE streaming |
+| `observation.py` | ~150 | Pull-pipeline helpers shared by CLI + agent |
+| `scoring.py` | 440 | CDC diff; 5-component weighted risk score; state bands |
+| `summarizer.py` | 406 | Claude Sonnet summary; trust-contract audit; fallback |
+| `validator.py` | 197 | Event gate; Claude YES/NO; signal classification |
+| `agent.py` | ~300 | Unattended daily pipeline with SSE (Pull → Clean → Promote) |
+| `report.py` | ~200 | DORA PDF export via ReportLab |
+
+**Frontend TypeScript** (`frontend/src/`):
+
+| File | LOC | Purpose |
+|---|---|---|
+| `App.tsx` | 146 | Top-level: state, keyboard chord, header, grid, modals |
+| `types.ts` | 101 | TypeScript interfaces (FlowEvent union, VendorOverview, etc.) |
+| `lib/api.ts` | 30 | Typed fetch helpers |
+| `components/VendorCard.tsx` | 59 | Grid card; state/score/sparkline/footer |
+| `components/StateBadge.tsx` | 20 | State pill (color-coded) |
+| `components/Sparkline.tsx` | 104 | Inline SVG trace with threshold guides + draw-on animation |
+| `components/CitedText.tsx` | 68 | Renders `[N]` markers as anchor links to source cards |
+| `components/DetailPanel.tsx` | 299 | Right-slide detail panel |
+| `components/RiskScale.tsx` | 52 | Header band-threshold legend |
+| `components/ActivityIndicator.tsx` | 46 | Always-on pulsing dot + monitoring claim + trigger mode |
+| `components/FleetOverview.tsx` | 135 | Fleet-level Claude briefing card |
+| `components/FlowPanel.tsx` | 440 | SSE consumer for live-pull |
+| `components/SettingsGear.tsx` | 201 | Dropdown: mode toggle + shortcut + reset |
+| `components/AgentPanel.tsx` | (large) | SSE consumer for daily agent pipeline |

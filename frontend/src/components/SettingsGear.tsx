@@ -56,23 +56,23 @@ export function SettingsGear({ mode, onModeChange, onAfterReset }: Props) {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label="Settings"
-        className={`w-7 h-7 flex items-center justify-center rounded text-ink-muted hover:text-ink-primary hover:bg-white/5 transition-colors ${
-          open ? "bg-white/5 text-ink-primary" : ""
+        className={`w-7 h-7 flex items-center justify-center rounded text-ink-muted hover:text-ink-primary hover:bg-ink-primary/5 transition-colors ${
+          open ? "bg-ink-primary/5 text-ink-primary" : ""
         }`}
       >
         <GearIcon />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-72 bg-surface border border-white/10 rounded-lg shadow-xl z-50">
-          <div className="px-4 py-3 border-b border-white/5">
+        <div className="absolute right-0 top-full mt-2 w-72 bg-surface border border-rule rounded-lg shadow-xl z-50">
+          <div className="px-4 py-3 border-b border-rule">
             <p className="text-[10px] uppercase tracking-wider text-ink-dim">
               Settings
             </p>
           </div>
 
           {/* Trigger mode toggle */}
-          <div className="px-4 py-3 border-b border-white/5">
+          <div className="px-4 py-3 border-b border-rule">
             <p className="text-[10px] uppercase tracking-wider text-ink-dim mb-2">
               Trigger mode
             </p>
@@ -103,7 +103,7 @@ export function SettingsGear({ mode, onModeChange, onAfterReset }: Props) {
           </div>
 
           {/* Shortcut reminder */}
-          <div className="px-4 py-3 border-b border-white/5">
+          <div className="px-4 py-3 border-b border-rule">
             <p className="text-[10px] uppercase tracking-wider text-ink-dim mb-2">
               Shortcut
             </p>
@@ -127,7 +127,7 @@ export function SettingsGear({ mode, onModeChange, onAfterReset }: Props) {
             <button
               onClick={handleReset}
               disabled={resetting}
-              className="w-full text-left text-xs px-3 py-2 rounded border border-white/10 hover:border-white/20 hover:bg-white/5 disabled:opacity-50 transition-colors"
+              className="w-full text-left text-xs px-3 py-2 rounded border border-rule hover:border-ink-primary/20 hover:bg-ink-primary/5 disabled:opacity-50 transition-colors"
             >
               {resetting ? "resetting…" : "reset live-pull rows"}
             </button>
@@ -164,7 +164,7 @@ function ModeButton({
       className={`px-3 py-2 rounded text-xs uppercase tracking-wider font-medium border transition-colors ${
         active
           ? activeClasses
-          : "bg-transparent border-white/10 text-ink-muted hover:text-ink-primary hover:border-white/20"
+          : "bg-transparent border-rule text-ink-muted hover:text-ink-primary hover:border-ink-primary/20"
       }`}
     >
       {label}
@@ -175,7 +175,7 @@ function ModeButton({
 
 function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <code className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-ink-muted font-mono">
+    <code className="text-[10px] px-1.5 py-0.5 rounded bg-ink-primary/5 border border-rule text-ink-muted font-medium tracking-wide">
       {children}
     </code>
   );

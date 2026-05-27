@@ -10,28 +10,33 @@ demo feature into a compliance deliverable. Every claim in the report
 traces to a numbered source URL — same trust contract as the dashboard
 AI summary, now in a printable artifact form.
 
-LEGAL/CREDIBILITY DISCLAIMER appears in BOTH the page-1 header callout
-and as a per-page footer on every page. Required, not optional —
-calling this output "DORA-compliant" without that disclaimer would
-itself be a regulatory misrepresentation.
+LEGAL/CREDIBILITY DISCLAIMER renders as a prominent amber callout above
+the title block on page 1. Required, not optional — calling this output
+"DORA-compliant" without that disclaimer would itself be a regulatory
+misrepresentation.
+
+Typography is the brand pair: General Sans (body, headers) and Sometype
+Mono (data values, source URLs). TTFs are bundled under fonts/ and
+registered with ReportLab on first use.
 
 PDF engine: ReportLab (pure-Python, no system deps).
 """
 from __future__ import annotations
 
 import io
+import os
 from datetime import datetime, timezone
 from typing import Any
 
-from reportlab.lib.colors import HexColor, white
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.colors import HexColor
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
-    KeepTogether,
     PageBreak,
     PageTemplate,
     Paragraph,
@@ -44,7 +49,48 @@ from .api import vendor_detail
 
 
 # ---------------------------------------------------------------------------
-# Verbatim disclaimer text — appears in header callout AND per-page footer.
+# Font registration — General Sans + Sometype Mono (TTFs bundled in fonts/).
+# Idempotent; only registers on first call per process.
+# ---------------------------------------------------------------------------
+
+_FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+
+# Logical font names used throughout the styles (post-registration).
+F_BODY = "GeneralSans"
+F_BODY_MEDIUM = "GeneralSans-Medium"
+F_BODY_SEMI = "GeneralSans-Semibold"
+F_BODY_BOLD = "GeneralSans-Bold"
+F_BODY_ITALIC = "GeneralSans-Italic"
+F_MONO = "SometypeMono"
+F_MONO_MEDIUM = "SometypeMono-Medium"
+
+
+def _register_fonts() -> None:
+    if F_BODY in pdfmetrics.getRegisteredFontNames():
+        return
+    pdfmetrics.registerFont(TTFont(F_BODY, os.path.join(_FONT_DIR, "GeneralSans-Regular.ttf")))
+    pdfmetrics.registerFont(TTFont(F_BODY_MEDIUM, os.path.join(_FONT_DIR, "GeneralSans-Medium.ttf")))
+    pdfmetrics.registerFont(TTFont(F_BODY_SEMI, os.path.join(_FONT_DIR, "GeneralSans-Semibold.ttf")))
+    pdfmetrics.registerFont(TTFont(F_BODY_BOLD, os.path.join(_FONT_DIR, "GeneralSans-Bold.ttf")))
+    pdfmetrics.registerFont(TTFont(F_BODY_ITALIC, os.path.join(_FONT_DIR, "GeneralSans-Italic.ttf")))
+    pdfmetrics.registerFontFamily(
+        F_BODY,
+        normal=F_BODY,
+        bold=F_BODY_BOLD,
+        italic=F_BODY_ITALIC,
+        boldItalic=F_BODY_BOLD,
+    )
+    pdfmetrics.registerFont(TTFont(F_MONO, os.path.join(_FONT_DIR, "SometypeMono-Regular.ttf")))
+    pdfmetrics.registerFont(TTFont(F_MONO_MEDIUM, os.path.join(_FONT_DIR, "SometypeMono-Medium.ttf")))
+    pdfmetrics.registerFontFamily(
+        F_MONO,
+        normal=F_MONO,
+        bold=F_MONO_MEDIUM,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Disclaimer text — appears in the page-1 callout (single source of truth).
 # ---------------------------------------------------------------------------
 
 DISCLAIMER = (
@@ -56,7 +102,9 @@ DISCLAIMER = (
 
 
 # ---------------------------------------------------------------------------
-# Colors (print-safe versions of the dashboard's signal-* tokens)
+# Colors. PDF stays light-mode (white background, printable artifact) but
+# state colors match the dashboard so a reader bouncing between the live
+# UI and the printout reads the same signal.
 # ---------------------------------------------------------------------------
 
 C_INK_PRIMARY = HexColor("#161B2B")
@@ -68,9 +116,11 @@ C_SURFACE = HexColor("#F4F5F8")
 C_DISCLAIMER_BG = HexColor("#FFF5E0")
 C_DISCLAIMER_BORDER = HexColor("#FFAA33")
 C_BRAND = HexColor("#3B82F6")
-C_CRITICAL = HexColor("#D63F2C")
-C_WARNING = HexColor("#C77A1A")
-C_STABLE = HexColor("#2E8A82")
+# State colors are exact dashboard hexes (DESIGN.md / tailwind.config.js)
+# so the printout reads identically to the UI.
+C_CRITICAL = HexColor("#FF5247")
+C_WARNING = HexColor("#FFAA33")
+C_STABLE = HexColor("#3FB8AF")
 
 _STATE_COLOR = {
     "critical": C_CRITICAL,
@@ -80,116 +130,115 @@ _STATE_COLOR = {
 
 
 # ---------------------------------------------------------------------------
-# Paragraph styles (lazy-built so reportlab can register fonts first)
+# Paragraph styles. Section headers go Signal Blue + uppercase tracking —
+# matches the dashboard's brand voice (calibrated · charged · restrained).
 # ---------------------------------------------------------------------------
 
 def _make_styles() -> dict[str, ParagraphStyle]:
+    _register_fonts()
     base = getSampleStyleSheet()["Normal"]
     s: dict[str, ParagraphStyle] = {}
 
     s["title"] = ParagraphStyle(
-        "title", parent=base, fontName="Helvetica-Bold",
-        fontSize=16, leading=20, textColor=C_INK_PRIMARY,
+        "title", parent=base, fontName=F_BODY_BOLD,
+        fontSize=17, leading=21, textColor=C_INK_PRIMARY,
         spaceAfter=2,
     )
     s["subtitle"] = ParagraphStyle(
-        "subtitle", parent=base, fontName="Helvetica",
-        fontSize=9, leading=12, textColor=C_INK_MUTED, spaceAfter=10,
+        "subtitle", parent=base, fontName=F_BODY,
+        fontSize=9, leading=12, textColor=C_INK_MUTED, spaceAfter=8,
     )
     s["section_h"] = ParagraphStyle(
-        "section_h", parent=base, fontName="Helvetica-Bold",
-        fontSize=10, leading=12, textColor=C_INK_MUTED,
+        "section_h", parent=base, fontName=F_BODY_SEMI,
+        fontSize=10, leading=12, textColor=C_BRAND,
         textTransform="uppercase", letterSpacing=1.2,
-        spaceBefore=14, spaceAfter=6,
+        spaceBefore=10, spaceAfter=4,
     )
     s["h2"] = ParagraphStyle(
-        "h2", parent=base, fontName="Helvetica-Bold",
-        fontSize=12, leading=15, textColor=C_INK_PRIMARY,
-        spaceAfter=4,
+        "h2", parent=base, fontName=F_BODY_BOLD,
+        fontSize=11, leading=14, textColor=C_INK_PRIMARY,
+        spaceBefore=4, spaceAfter=2,
     )
     s["body"] = ParagraphStyle(
-        "body", parent=base, fontName="Helvetica",
-        fontSize=10, leading=14, textColor=C_INK_BODY, spaceAfter=6,
+        "body", parent=base, fontName=F_BODY,
+        fontSize=10, leading=14, textColor=C_INK_BODY, spaceAfter=4,
     )
     s["body_tight"] = ParagraphStyle(
-        "body_tight", parent=s["body"], spaceAfter=2,
+        "body_tight", parent=s["body"], spaceAfter=1,
     )
     s["mono"] = ParagraphStyle(
-        "mono", parent=base, fontName="Courier",
-        fontSize=8, leading=11, textColor=C_INK_BODY,
+        "mono", parent=base, fontName=F_MONO,
+        fontSize=7.5, leading=10.5, textColor=C_INK_BODY,
     )
     s["mono_link"] = ParagraphStyle(
-        "mono_link", parent=base, fontName="Courier",
-        fontSize=8, leading=11, textColor=C_BRAND,
+        "mono_link", parent=base, fontName=F_MONO,
+        fontSize=7.5, leading=10.5, textColor=C_BRAND,
+    )
+    s["mono_data"] = ParagraphStyle(
+        "mono_data", parent=base, fontName=F_MONO,
+        fontSize=9, leading=12, textColor=C_INK_BODY,
     )
     s["small"] = ParagraphStyle(
-        "small", parent=base, fontName="Helvetica",
+        "small", parent=base, fontName=F_BODY,
         fontSize=8, leading=11, textColor=C_INK_MUTED,
     )
     s["small_italic"] = ParagraphStyle(
-        "small_italic", parent=base, fontName="Helvetica-Oblique",
+        "small_italic", parent=base, fontName=F_BODY_ITALIC,
         fontSize=8, leading=11, textColor=C_INK_MUTED,
     )
     s["disclaimer_box"] = ParagraphStyle(
-        "disclaimer_box", parent=base, fontName="Helvetica-Bold",
+        "disclaimer_box", parent=base, fontName=F_BODY_MEDIUM,
         fontSize=9, leading=13, textColor=C_INK_PRIMARY,
-        leftIndent=8, rightIndent=8, spaceBefore=8, spaceAfter=8,
-    )
-    s["footer"] = ParagraphStyle(
-        "footer", parent=base, fontName="Helvetica-Oblique",
-        fontSize=6.5, leading=8.5, textColor=C_INK_MUTED,
+        leftIndent=4, rightIndent=4,
     )
     return s
 
 
 # ---------------------------------------------------------------------------
-# Per-page chrome (header rule + footer disclaimer + pagination)
+# Per-page chrome (header rule + brand wordmark + footer rule + page number)
 # ---------------------------------------------------------------------------
 
 def _draw_chrome(canvas, doc):
+    _register_fonts()
     canvas.saveState()
     width, height = doc.pagesize
     margin_x = doc.leftMargin
 
-    # Top rule under the running brand wordmark (very subtle)
+    # Top rule under the running brand wordmark.
     canvas.setStrokeColor(C_RULE)
     canvas.setLineWidth(0.4)
     canvas.line(margin_x, height - 0.5 * inch, width - margin_x, height - 0.5 * inch)
 
-    # Running brand wordmark in the top margin (so even pages without the
-    # title block still show "Foreshock · DORA evidence report")
-    canvas.setFont("Helvetica-Bold", 8)
-    canvas.setFillColor(C_INK_MUTED)
+    # Running brand wordmark + subtitle in the top margin.
+    canvas.setFont(F_BODY_BOLD, 8)
+    canvas.setFillColor(C_BRAND)
     canvas.drawString(
         margin_x, height - 0.4 * inch,
         "FORESHOCK"
     )
-    canvas.setFont("Helvetica", 8)
+    canvas.setFont(F_BODY, 8)
     canvas.setFillColor(C_INK_DIM)
     canvas.drawString(
-        margin_x + 0.65 * inch, height - 0.4 * inch,
+        margin_x + 0.62 * inch, height - 0.4 * inch,
         "third-party ICT vendor risk report"
     )
 
-    # Footer rule
-    footer_top = 0.75 * inch
+    # Footer rule + page number / confidentiality line. No disclaimer body
+    # in the footer — the page-1 callout is the single source.
+    footer_y = 0.55 * inch
     canvas.setStrokeColor(C_RULE)
     canvas.setLineWidth(0.4)
-    canvas.line(margin_x, footer_top, width - margin_x, footer_top)
+    canvas.line(margin_x, footer_y, width - margin_x, footer_y)
 
-    # Per-page disclaimer (full text, wrapped via Paragraph flow)
-    styles = _make_styles()
-    p = Paragraph(f"<b>Disclaimer.</b> {DISCLAIMER}", styles["footer"])
-    avail_w = width - 2 * margin_x
-    w, h = p.wrap(avail_w, 0.5 * inch)
-    p.drawOn(canvas, margin_x, footer_top - 0.05 * inch - h)
-
-    # Page number + confidentiality marker (right side, above rule)
-    canvas.setFont("Helvetica", 7.5)
+    canvas.setFont(F_BODY, 7.5)
     canvas.setFillColor(C_INK_MUTED)
+    canvas.drawString(
+        margin_x, footer_y - 0.18 * inch,
+        "Foreshock  ·  continuous ICT vendor risk monitoring"
+    )
     canvas.drawRightString(
         width - margin_x,
-        footer_top + 0.07 * inch,
+        footer_y - 0.18 * inch,
         f"Page {doc.page}  ·  CONFIDENTIAL  ·  example output",
     )
 
@@ -231,13 +280,13 @@ def _build_disclaimer_callout(styles: dict) -> list:
     t = Table(cell, colWidths=[7.0 * inch])
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), C_DISCLAIMER_BG),
-        ("BOX", (0, 0), (-1, -1), 1.2, C_DISCLAIMER_BORDER),
+        ("BOX", (0, 0), (-1, -1), 1.0, C_DISCLAIMER_BORDER),
         ("LEFTPADDING", (0, 0), (-1, -1), 12),
         ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-        ("TOPPADDING", (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 9),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
     ]))
-    return [t, Spacer(1, 12)]
+    return [t, Spacer(1, 10)]
 
 
 def _build_section_identification(detail: dict, styles: dict, gen_ts: str) -> list:
@@ -258,7 +307,7 @@ def _build_section_identification(detail: dict, styles: dict, gen_ts: str) -> li
     return [
         Paragraph("1 · Vendor identification", styles["section_h"]),
         _kv_table(rows),
-        Spacer(1, 4),
+        Spacer(1, 2),
     ]
 
 
@@ -269,12 +318,12 @@ def _build_section_posture(detail: dict, styles: dict) -> list:
     state_color = _STATE_COLOR.get(state, C_INK_PRIMARY)
 
     score_text = (
-        f'<font size=22 name="Helvetica-Bold" color="{state_color.hexval()}">'
+        f'<font size=24 name="{F_BODY_BOLD}" color="{state_color.hexval()}">'
         f"{overview['score']:.1f}</font>"
         f'<font size=12 color="#9AA3B8"> / 100</font>'
     )
     state_label = (
-        f'<font size=11 name="Helvetica-Bold" color="{state_color.hexval()}">'
+        f'<font size=11 name="{F_BODY_BOLD}" color="{state_color.hexval()}">'
         f"{state.upper()}</font>"
     )
     band_info = (
@@ -312,37 +361,45 @@ def _build_section_posture(detail: dict, styles: dict) -> list:
     return [
         Paragraph("2 · Current risk posture", styles["section_h"]),
         posture_tbl,
-        Spacer(1, 8),
+        Spacer(1, 6),
         _kv_table(facts),
-        Spacer(1, 4),
+        Spacer(1, 2),
     ]
 
 
 def _build_section_components(detail: dict, styles: dict) -> list:
     overview = detail["overview"]
     components = overview["components"]
+    # SINGLE SOURCE OF TRUTH for the composite score. §2 posture headline
+    # displays this; §3 Total row displays this; they're guaranteed identical
+    # because they're the same value. The raw sum of full-precision
+    # contributions is shown as a transparency footnote so any reader can
+    # verify the rounding math.
+    headline_score = overview["score"]
+    raw_sum = sum(c["contribution"] for c in components)
 
     rows = [["Component", "Score", "Weight", "Contribution", "Drivers"]]
     for c in components:
         drivers = c.get("drivers") or []
         drivers_text = "; ".join(drivers) if drivers else "—"
-        # Paragraph wrap on drivers cell so long driver text wraps cleanly.
         drivers_p = Paragraph(drivers_text, styles["small"])
         rows.append([
             c["name"],
-            f"{c['score']:.1f}",
-            f"{c['weight']:.2f}",
-            f"{c['contribution']:.2f}",
+            Paragraph(f"{c['score']:.1f}", styles["mono_data"]),
+            Paragraph(f"{c['weight']:.2f}", styles["mono_data"]),
+            Paragraph(f"{c['contribution']:.2f}", styles["mono_data"]),
             drivers_p,
         ])
 
-    total = sum(c["contribution"] for c in components)
     rows.append([
-        Paragraph("<b>Total</b>", styles["small"]),
+        Paragraph("<b>Total composite</b>", styles["small"]),
         "",
         "",
-        Paragraph(f"<b>{total:.2f}</b>", styles["small"]),
-        "",
+        Paragraph(f"<b>{headline_score:.1f}</b>", styles["mono_data"]),
+        Paragraph(
+            "<i>= §2 posture score (single source of truth)</i>",
+            styles["small_italic"],
+        ),
     ])
 
     tbl = Table(
@@ -353,9 +410,9 @@ def _build_section_components(detail: dict, styles: dict) -> list:
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), C_SURFACE),
         ("TEXTCOLOR", (0, 0), (-1, 0), C_INK_MUTED),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), F_BODY_SEMI),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
-        ("FONTNAME", (0, 1), (-1, -2), "Helvetica"),
+        ("FONTNAME", (0, 1), (-1, -2), F_BODY),
         ("FONTSIZE", (0, 1), (-1, -2), 9),
         ("TEXTCOLOR", (0, 1), (-1, -2), C_INK_BODY),
         ("ALIGN", (1, 1), (3, -1), "RIGHT"),
@@ -378,9 +435,19 @@ def _build_section_components(detail: dict, styles: dict) -> list:
             "failure signals.",
             styles["small"],
         ),
-        Spacer(1, 6),
-        tbl,
         Spacer(1, 4),
+        tbl,
+        Spacer(1, 2),
+        Paragraph(
+            f"<i>Reconciliation note. Total composite = "
+            f"round(sum of full-precision contributions, 1). "
+            f"Raw sum = {raw_sum:.4f}, displayed = {headline_score:.1f}. "
+            f"Individual contributions are displayed at 2-decimal precision; "
+            f"a column-wise sum of the displayed values may differ from the "
+            f"composite by ≤ 0.1 due to per-row rounding.</i>",
+            styles["small_italic"],
+        ),
+        Spacer(1, 2),
     ]
 
 
@@ -404,22 +471,25 @@ def _build_section_convergence(detail: dict, styles: dict) -> list:
             str(i),
             s.get("metric") or "—",
             Paragraph(s.get("summary") or "—", styles["small"]),
-            str(s.get("latest_value") if s.get("latest_value") is not None else "—"),
-            s.get("latest_date") or "—",
-            str(s.get("source_count", 0)),
+            Paragraph(
+                str(s.get("latest_value") if s.get("latest_value") is not None else "—"),
+                styles["mono_data"],
+            ),
+            Paragraph(s.get("latest_date") or "—", styles["mono_data"]),
+            Paragraph(str(s.get("source_count", 0)), styles["mono_data"]),
         ])
 
     tbl = Table(
         rows,
-        colWidths=[0.3*inch, 1.2*inch, 3.3*inch, 0.9*inch, 0.8*inch, 0.5*inch],
+        colWidths=[0.3*inch, 1.2*inch, 3.05*inch, 0.95*inch, 1.0*inch, 0.5*inch],
         repeatRows=1,
     )
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), C_SURFACE),
         ("TEXTCOLOR", (0, 0), (-1, 0), C_INK_MUTED),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), F_BODY_SEMI),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
-        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTNAME", (0, 1), (-1, -1), F_BODY),
         ("FONTSIZE", (0, 1), (-1, -1), 9),
         ("TEXTCOLOR", (0, 1), (-1, -1), C_INK_BODY),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -440,9 +510,9 @@ def _build_section_convergence(detail: dict, styles: dict) -> list:
             "trip, and far more diagnostic of material vendor stress.",
             styles["small"],
         ),
-        Spacer(1, 6),
-        tbl,
         Spacer(1, 4),
+        tbl,
+        Spacer(1, 2),
     ]
 
 
@@ -470,7 +540,7 @@ def _build_section_narrative(detail: dict, styles: dict) -> list:
             "no citation is fabricated.",
             styles["small"],
         ),
-        Spacer(1, 8),
+        Spacer(1, 6),
         Paragraph("Headline", styles["h2"]),
         Paragraph(_para_safe(summary.get("headline") or ""), styles["body"]),
         Paragraph("Sentiment read", styles["h2"]),
@@ -488,9 +558,9 @@ def _build_section_narrative(detail: dict, styles: dict) -> list:
     ))
 
     audit = summary.get("audit") or {}
-    flow.append(Spacer(1, 6))
-    pass_marker = '<font color="#2E8A82"><b>PASS</b></font>'
-    fail_marker = '<font color="#D63F2C"><b>FAIL</b></font>'
+    flow.append(Spacer(1, 4))
+    pass_marker = f'<font color="{C_STABLE.hexval()}"><b>PASS</b></font>'
+    fail_marker = f'<font color="{C_CRITICAL.hexval()}"><b>FAIL</b></font>'
     audit_verdict = pass_marker if audit.get("all_claims_sourced") else fail_marker
     audit_text = (
         f"<b>Trust-contract audit.</b> "
@@ -518,7 +588,7 @@ def _build_section_sources(detail: dict, styles: dict) -> list:
             "Pay vendor and have no public URL.",
             styles["small"],
         ),
-        Spacer(1, 6),
+        Spacer(1, 4),
     ]
     if not citations:
         flow.append(Paragraph(
@@ -532,30 +602,30 @@ def _build_section_sources(detail: dict, styles: dict) -> list:
         url = c.get("source_url") or ""
         if url.startswith("http"):
             url_p = Paragraph(
-                f'<link href="{_escape_attr(url)}" color="#3B82F6">{_para_safe(url)}</link>',
+                f'<link href="{_escape_attr(url)}" color="{C_BRAND.hexval()}">{_para_safe(url)}</link>',
                 styles["mono_link"],
             )
         else:
             url_p = Paragraph(_para_safe(url) or "—", styles["mono"])
         rows.append([
-            f"[{c.get('n')}]",
+            Paragraph(f"[{c.get('n')}]", styles["mono_data"]),
             c.get("metric") or "—",
-            c.get("capture_date") or "—",
+            Paragraph(c.get("capture_date") or "—", styles["mono_data"]),
             Paragraph(_para_safe(c.get("snippet") or "—"), styles["small"]),
             url_p,
         ])
 
     tbl = Table(
         rows,
-        colWidths=[0.45*inch, 1.05*inch, 0.7*inch, 2.4*inch, 2.4*inch],
+        colWidths=[0.5*inch, 1.05*inch, 0.95*inch, 2.25*inch, 2.25*inch],
         repeatRows=1,
     )
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), C_SURFACE),
         ("TEXTCOLOR", (0, 0), (-1, 0), C_INK_MUTED),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), F_BODY_SEMI),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
-        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTNAME", (0, 1), (-1, -1), F_BODY),
         ("FONTSIZE", (0, 1), (-1, -1), 8),
         ("TEXTCOLOR", (0, 1), (-1, -1), C_INK_BODY),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -644,8 +714,8 @@ def _kv_table(rows: list[list[str]]) -> Table:
         ("LINEBELOW", (0, 0), (-1, -1), 0.25, C_RULE),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
     return tbl
 
@@ -700,7 +770,7 @@ def build_vendor_report_pdf(vendor_name: str) -> bytes:
         leftMargin=0.75 * inch,
         rightMargin=0.75 * inch,
         topMargin=0.75 * inch,
-        bottomMargin=1.05 * inch,
+        bottomMargin=0.85 * inch,
         title=f"Foreshock vendor risk report — {vendor_name}",
         author="Foreshock",
         subject="Third-party ICT vendor risk profile",

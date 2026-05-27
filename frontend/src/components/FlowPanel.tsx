@@ -94,11 +94,12 @@ export function FlowPanel({ triggerNonce, mode, onClose, onComplete }: Props) {
 
   // Dim the backdrop once the refresh has landed so the vendor cards
   // behind become clearly visible without the operator having to close
-  // the panel.
+  // the panel. Both overlay tokens are tinted toward the base hue
+  // (rgb 8,8,9), never pure black (DESIGN.md color rule).
   const overlayClass =
     refreshPhase === "updated"
-      ? "bg-black/30 transition-colors duration-700"
-      : "bg-black/80 transition-colors duration-300";
+      ? "bg-overlay-quiet transition-colors duration-700"
+      : "bg-overlay-strong transition-colors duration-300";
 
   return (
     <div
@@ -133,7 +134,7 @@ export function FlowPanel({ triggerNonce, mode, onClose, onComplete }: Props) {
             </div>
           )}
         </div>
-        <div className="px-5 py-3 border-t border-white/10 flex justify-between items-center">
+        <div className="px-5 py-3 border-t border-rule flex justify-between items-center">
           <span className="text-[10px] text-ink-dim">
             keyboard: Ctrl/Cmd + Shift + L · esc to close
           </span>
@@ -397,7 +398,7 @@ function Line({
 
 function Tag({ children }: { children: React.ReactNode }) {
   return (
-    <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/5 text-ink-muted border border-white/10">
+    <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-ink-primary/5 text-ink-muted border border-rule">
       {children}
     </span>
   );

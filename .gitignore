@@ -17,3 +17,6 @@ build/
 
 # misc
 *.log
+
+# Local sample reports / scratch
+backend/tmp/

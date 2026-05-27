@@ -48,7 +48,7 @@ export function CitedText({ text, citations }: Props) {
                 className={
                   valid
                     ? "text-signal-blue hover:underline font-medium"
-                    : "text-signal-red underline decoration-dotted"
+                    : "text-signal-amber underline decoration-dotted"
                 }
               >
                 {n}

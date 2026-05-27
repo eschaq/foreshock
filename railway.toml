@@ -1,0 +1,31 @@
+# Railway deployment configuration for foreshock.
+#
+# Two surfaces fire the same Pull → Clean → Promote agent pipeline:
+#   - UI chord (Ctrl/Cmd + Shift + L) → POST /agent/run
+#   - Cron entry below at 07:00 UTC daily
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "pip install -r backend/requirements.txt"
+
+[deploy]
+startCommand = "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/"
+restartPolicyType = "ON_FAILURE"
+
+# ---------------------------------------------------------------------------
+# Daily agent cron — fires POST /agent/run every day at 07:00 UTC.
+#
+# Railway cron jobs run the configured `command` on a schedule. We hit the
+# internal HTTP endpoint via curl so the same pipeline used by the UI also
+# runs unattended. The endpoint returns immediately with a job_id; the
+# pipeline runs in the background and writes to Airtable.
+#
+# RAILWAY_PRIVATE_DOMAIN is auto-injected by Railway for service-to-self
+# calls (no public exposure required).
+# ---------------------------------------------------------------------------
+
+[[cron]]
+name = "daily-agent-run"
+schedule = "0 7 * * *"
+command = "curl -sS -X POST http://${RAILWAY_PRIVATE_DOMAIN}:${PORT}/agent/run || curl -sS -X POST http://localhost:${PORT}/agent/run"

@@ -75,6 +75,75 @@ export interface VendorDetail {
   recent_signals: RecentSignal[];
 }
 
+// -------- Agent pipeline ----------------------------------------------------
+// Per-step events streamed from the backend during a Pull → Clean → Promote
+// run. The shape mirrors what `foreshock/agent.py` emits.
+
+export type AgentEvent =
+  | { step: "pull"; phase: "start"; vendors: string[] }
+  | { step: "pull"; phase: "done"; rows_pulled: number; failures: number; fallback_calls: number }
+  | { step: "pull"; phase?: "session_failed"; error?: string }
+  | {
+      step: "pull";
+      vendor: string;
+      tool: string;
+      class?: string;
+      query?: string;
+      status: "firing" | "done" | "failed";
+      results?: number;
+      duration_ms?: number;
+      path?: string;
+      error?: string;
+      note?: string;
+    }
+  | { step: "clean"; phase: "start" | "noop"; reason?: string }
+  | { step: "clean"; phase: "done"; kept: number; rejected: number; candidates: number }
+  | {
+      step: "clean";
+      vendor: string;
+      metric: string;
+      verdict: "kept" | "rejected";
+      reason: string;
+      title?: string;
+    }
+  | { step: "promote"; phase: "start"; rows_to_write: number }
+  | { step: "promote"; phase: "done"; rows_written: number; failures: number }
+  | {
+      step: "promote";
+      vendor: string;
+      status: "done" | "failed";
+      rows_written?: number;
+      rows_attempted?: number;
+      error?: string;
+    }
+  | { step: "complete"; summary: AgentSummary }
+  | { step: "error"; message: string }
+  | { type: "stream_end" }
+  | { type: "timeout" };
+
+export interface AgentSummary {
+  rows_written: number;
+  events_kept: number;
+  events_rejected: number;
+  fallback_calls: number;
+  elapsed_seconds: number;
+  capture_date: string;
+  failures: { vendor: string; error: string }[];
+}
+
+export interface FleetSummary {
+  headline: string;
+  narrative: string;
+  generated_by: string;
+  parse_error: string;
+  fleet_counts: {
+    critical: number;
+    warning: number;
+    stable: number;
+    total: number;
+  };
+}
+
 export interface SystemStatus {
   monitoring_active: boolean;
   vendor_count: number;

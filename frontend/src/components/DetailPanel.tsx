@@ -37,14 +37,14 @@ export function DetailPanel({ vendorName, onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 z-30 flex justify-end"
+      className="fixed inset-0 bg-overlay-strong z-30 flex justify-end"
       onClick={onClose}
     >
       <div
-        className="bg-base border-l border-white/10 w-full max-w-3xl h-full overflow-y-auto"
+        className="bg-base border-l border-rule w-full max-w-3xl h-full overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 bg-base/95 backdrop-blur border-b border-white/10 px-6 py-4 flex items-center justify-between">
+        <div className="sticky top-0 bg-base border-b border-rule px-6 py-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold text-ink-primary">
             {vendorName}
           </h2>
@@ -94,7 +94,7 @@ function DetailBody({ detail }: { detail: VendorDetail }) {
         <div>
           <p className="text-ink-muted text-xs">{overview.type}</p>
           <div className="flex items-baseline gap-3 mt-1">
-            <span className="text-ink-primary text-4xl font-mono tabular-nums">
+            <span className="text-ink-primary text-4xl font-bold tabular-nums">
               {overview.score.toFixed(1)}
             </span>
             <StateBadge state={overview.state} />
@@ -124,7 +124,7 @@ function DetailBody({ detail }: { detail: VendorDetail }) {
           </thead>
           <tbody>
             {overview.components.map((c) => (
-              <tr key={c.name} className="border-t border-white/5">
+              <tr key={c.name} className="border-t border-rule">
                 <td className="py-1 text-ink-primary">{c.name}</td>
                 <td className="text-right tabular-nums text-ink-muted">
                   {c.score.toFixed(1)}
@@ -164,7 +164,7 @@ function DetailBody({ detail }: { detail: VendorDetail }) {
             </span>
           </div>
 
-          <div className="bg-surface border border-white/5 rounded-lg p-4 space-y-4 text-sm leading-relaxed">
+          <div className="bg-surface border border-rule rounded-lg p-4 space-y-4 text-sm leading-relaxed">
             <p className="text-ink-primary font-medium">
               <CitedText
                 text={summary.headline}
@@ -204,10 +204,10 @@ function DetailBody({ detail }: { detail: VendorDetail }) {
               <li
                 key={c.n}
                 id={`source-${c.n}`}
-                className="bg-surface border border-white/5 rounded p-3 text-xs"
+                className="bg-surface border border-rule rounded p-3 text-xs"
               >
                 <div className="flex items-start gap-2">
-                  <span className="text-signal-blue font-mono">[{c.n}]</span>
+                  <span className="text-signal-blue font-medium tabular-nums">[{c.n}]</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-ink-muted">
                       <span className="text-ink-primary">{c.metric}</span> ·{" "}
@@ -239,7 +239,7 @@ function DetailBody({ detail }: { detail: VendorDetail }) {
       )}
 
       {!alert.fired && (
-        <section className="bg-surface border border-white/5 rounded p-4 text-sm text-ink-muted">
+        <section className="bg-surface border border-rule rounded p-4 text-sm text-ink-muted">
           No active alert — this vendor is stable. AI summary not generated.
         </section>
       )}
@@ -263,7 +263,7 @@ function DetailBody({ detail }: { detail: VendorDetail }) {
               {recent_signals.map((s, i) => (
                 <tr
                   key={i}
-                  className="border-t border-white/5 align-top"
+                  className="border-t border-rule align-top"
                 >
                   <td className="py-1 text-ink-muted whitespace-nowrap pr-2 tabular-nums">
                     {s.capture_date}

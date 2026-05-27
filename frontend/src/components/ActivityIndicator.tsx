@@ -18,15 +18,13 @@ export function ActivityIndicator({ status, triggerMode }: Props) {
         <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-signal-teal" />
       </span>
       <span>monitoring active</span>
-      <span className="text-ink-dim">·</span>
+      <span className="inline-block w-px h-3 bg-rule mx-2 align-middle" />
       <span>
-        last pull <span className="text-ink-primary font-mono">{lastPull}</span>
-      </span>
-      <span className="text-ink-dim">·</span>
-      <span>
+        last pull <span className="text-ink-primary tabular-nums">{lastPull}</span>
+        <span className="text-ink-dim mx-1.5">·</span>
         {total} signals
       </span>
-      <span className="text-ink-dim">·</span>
+      <span className="inline-block w-px h-3 bg-rule mx-2 align-middle" />
       <span
         className={
           triggerMode === "live"

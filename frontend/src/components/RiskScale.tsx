@@ -18,8 +18,8 @@ export function RiskScale() {
       </span>
 
       {/* The bar: three segments, widths proportional to range (30/30/40). */}
-      <div className="flex items-center gap-1.5 font-mono text-ink-muted">
-        <span className="tabular-nums">0</span>
+      <div className="flex items-center gap-1.5 text-ink-muted tabular-nums">
+        <span>0</span>
         {BANDS.map((b) => (
           <div
             key={b.label}
@@ -30,7 +30,7 @@ export function RiskScale() {
               className={`flex-1 h-1.5 rounded ${b.bar}`}
               title={`${b.label}: ${b.min}-${b.max}`}
             />
-            <span className="tabular-nums">{b.max}</span>
+            <span>{b.max}</span>
           </div>
         ))}
       </div>
@@ -41,7 +41,7 @@ export function RiskScale() {
           <span key={b.label} className="flex items-center gap-2">
             {i > 0 && <span className="text-ink-dim">·</span>}
             <span className={b.text}>{b.label}</span>
-            <span className="text-ink-dim font-mono normal-case tracking-normal">
+            <span className="text-ink-dim normal-case tracking-normal tabular-nums">
               {b.min}–{b.max}
             </span>
           </span>

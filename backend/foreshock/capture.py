@@ -365,3 +365,9 @@ async def capture_all(
                 )
                 captures.append(cap)
     return captures
+
+
+# Public aliases — same predicates, no leading underscore so other modules
+# (foreshock/observation.py, foreshock/agent.py) can import them cleanly.
+detect_legal_event = _detect_legal
+detect_leadership_event = _detect_leadership

@@ -1,4 +1,6 @@
+import asyncio
 import json
+import uuid
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from foreshock.api import (
     all_vendors_overview,
     clear_summary_cache,
+    fleet_summary_payload,
     vendor_detail,
 )
 from foreshock.live_pull import (
@@ -45,6 +48,12 @@ def vendor(name: str, refresh: bool = False):
     if "error" in detail:
         raise HTTPException(status_code=404, detail=detail["error"])
     return detail
+
+
+@app.get("/fleet/summary")
+def fleet_summary(refresh: bool = False):
+    """Dashboard fleet-overview card: 3-4 sentence portfolio briefing."""
+    return fleet_summary_payload(force_refresh=refresh)
 
 
 @app.post("/cache/summaries/clear")
@@ -125,3 +134,80 @@ async def live_pull_stream(mode: str = "live", save_seed: bool = False):
 def live_pull_reset():
     """Delete every row tagged `live-pull-beat:`. For rehearsal cycles."""
     return {"deleted": reset_live_pull_rows()}
+
+
+# ---------------------------------------------------------------------------
+# Unattended daily agent — Pull → Clean → Promote pipeline.
+# Triggered by the UI chord OR by Railway cron (see railway.toml).
+# Per-step progress events stream out via SSE.
+# ---------------------------------------------------------------------------
+
+_agent_jobs: dict[str, dict] = {}
+
+
+@app.post("/agent/run")
+async def agent_run():
+    """
+    Kick off a Pull → Clean → Promote run async. Returns the job_id
+    immediately so the caller can open the SSE stream and watch progress.
+    """
+    from foreshock.agent import run_agent_pipeline
+
+    job_id = uuid.uuid4().hex[:12]
+    queue: asyncio.Queue = asyncio.Queue()
+    _agent_jobs[job_id] = {"queue": queue, "status": "running"}
+
+    def emit_event(event: dict) -> None:
+        # Synchronous-safe queue insert from any context.
+        queue.put_nowait(event)
+
+    async def runner():
+        try:
+            await run_agent_pipeline(emit_event)
+        except Exception as e:
+            queue.put_nowait({"step": "error", "message": str(e)})
+        finally:
+            _agent_jobs[job_id]["status"] = "done"
+            queue.put_nowait(None)  # sentinel: closes the SSE stream
+
+    asyncio.create_task(runner())
+    return {"job_id": job_id}
+
+
+@app.get("/agent/stream/{job_id}")
+async def agent_stream(job_id: str):
+    """SSE stream of per-step events for a previously-started agent job."""
+    job = _agent_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
+    queue: asyncio.Queue = job["queue"]
+
+    async def gen():
+        try:
+            while True:
+                # Long timeout — agent runs can be 60–120s. Timeout is a
+                # safety net so the stream doesn't hang forever if the
+                # runner crashes silently.
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=300)
+                except asyncio.TimeoutError:
+                    yield 'data: {"type": "timeout"}\n\n'
+                    break
+                if event is None:
+                    yield 'data: {"type": "stream_end"}\n\n'
+                    break
+                yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            # Clean up the job entry once the stream closes (success, timeout,
+            # or client disconnect). Prevents memory growth on long-lived servers.
+            _agent_jobs.pop(job_id, None)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
