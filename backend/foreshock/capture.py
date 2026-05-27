@@ -42,11 +42,18 @@ REAL_VENDORS: list[dict] = [
     # PR agency vs. Stripe Inc. payments). Quoted phrases force exact-match.
     # `name` is still the stable identifier used everywhere downstream
     # (Airtable vendor_name, scoring keys, alert payloads, dashboard).
-    {"name": "Stripe",    "type": "Payments",    "query_name": '"Stripe Inc."'},
-    {"name": "Plaid",     "type": "Bank Data",   "query_name": '"Plaid Inc." OR "Plaid Technologies"'},
-    {"name": "Snowflake", "type": "Data Infra",  "query_name": '"Snowflake Inc."'},
-    {"name": "Twilio",    "type": "Comms/2FA",   "query_name": '"Twilio Inc."'},
-    {"name": "AWS",       "type": "Cloud Infra", "query_name": '"Amazon Web Services"'},
+    # `cik` is the SEC EDGAR Central Index Key, zero-padded to 10 digits;
+    # `None` for private companies — EDGAR capture is a no-op for those.
+    {"name": "Stripe",    "type": "Payments",    "query_name": '"Stripe Inc."',
+     "cik": None},                   # private
+    {"name": "Plaid",     "type": "Bank Data",   "query_name": '"Plaid Inc." OR "Plaid Technologies"',
+     "cik": None},                   # private
+    {"name": "Snowflake", "type": "Data Infra",  "query_name": '"Snowflake Inc."',
+     "cik": "0001640147"},
+    {"name": "Twilio",    "type": "Comms/2FA",   "query_name": '"Twilio Inc."',
+     "cik": "0001403708"},
+    {"name": "AWS",       "type": "Cloud Infra", "query_name": '"Amazon Web Services"',
+     "cik": "0001018724"},           # parent: Amazon.com Inc.
 ]
 
 

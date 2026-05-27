@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchVendorDetail } from "../lib/api";
+import { isEdgarMonitored, isSecSourceUrl } from "../lib/edgar";
 import type { VendorDetail } from "../types";
 import { CitedText } from "./CitedText";
 import { Sparkline } from "./Sparkline";
@@ -45,8 +46,16 @@ export function DetailPanel({ vendorName, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 bg-base border-b border-rule px-6 py-4 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-ink-primary">
+          <h2 className="text-xl font-semibold text-ink-primary flex items-center gap-2">
             {vendorName}
+            {isEdgarMonitored(vendorName, false) && (
+              <span
+                className="text-[9px] uppercase tracking-wider bg-signal-blue text-white px-1.5 py-0.5 rounded font-normal"
+                title="SEC EDGAR monitoring active — 8-K filings tracked"
+              >
+                sec
+              </span>
+            )}
           </h2>
           <div className="flex items-center gap-4">
             <a
@@ -208,6 +217,14 @@ function DetailBody({ detail }: { detail: VendorDetail }) {
               >
                 <div className="flex items-start gap-2">
                   <span className="text-signal-blue font-medium tabular-nums">[{c.n}]</span>
+                  {isSecSourceUrl(c.source_url) && (
+                    <span
+                      className="text-[8px] uppercase tracking-wider bg-signal-blue text-white px-1 py-px rounded leading-none mt-1"
+                      title="Citation from SEC EDGAR filing"
+                    >
+                      sec
+                    </span>
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="text-ink-muted">
                       <span className="text-ink-primary">{c.metric}</span> ·{" "}

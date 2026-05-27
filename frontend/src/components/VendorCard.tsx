@@ -1,3 +1,4 @@
+import { isEdgarMonitored } from "../lib/edgar";
 import type { VendorOverview } from "../types";
 import { Sparkline } from "./Sparkline";
 import { StateBadge } from "./StateBadge";
@@ -56,6 +57,14 @@ export function VendorCard({ vendor, onClick, animate = true }: Props) {
             {vendor.is_demo && (
               <span className="text-[9px] uppercase tracking-wider text-ink-dim border border-ink-dim/30 px-1.5 py-0.5 rounded">
                 demo
+              </span>
+            )}
+            {isEdgarMonitored(vendor.name, vendor.is_demo) && (
+              <span
+                className="text-[9px] uppercase tracking-wider bg-signal-blue text-white px-1.5 py-0.5 rounded"
+                title="SEC EDGAR monitoring active — 8-K filings tracked"
+              >
+                sec
               </span>
             )}
           </div>

@@ -34,6 +34,7 @@ from .capture import (
     detect_leadership_event,
     score_sentiment_heuristic,
 )
+from .edgar import capture_edgar_for_vendor
 from .validator import _strip_fences
 
 AFTER = "2026-01-01"
@@ -405,7 +406,18 @@ async def capture_real_vendor(
         vendor, per_class_counts, capture_date, len(seen_urls), fallback_paths
     )
 
-    rows = sentiment_rows + legal_rows + leadership_rows + [open_roles_row, volume_row]
+    # The EDGAR class — no-op for vendors without a CIK (Stripe, Plaid).
+    # Uses scrape_as_markdown on SEC's submissions JSON; emits its own
+    # firing/done event so the FlowPanel renders progress consistently.
+    edgar_result = await capture_edgar_for_vendor(
+        session, vendor, capture_date, emit_event=emit_event,
+    )
+    edgar_rows = edgar_result.get("rows", [])
+
+    rows = (
+        sentiment_rows + legal_rows + leadership_rows
+        + [open_roles_row, volume_row] + edgar_rows
+    )
     return {
         "vendor": vendor["name"],
         "rows": rows,
@@ -417,4 +429,6 @@ async def capture_real_vendor(
         "per_class_counts": per_class_counts,
         "fallback_paths": fallback_paths,
         "open_roles_path": careers_path,
+        "edgar_filings_found": edgar_result.get("filings_found", 0),
+        "edgar_items_matched": edgar_result.get("items_matched", 0),
     }
