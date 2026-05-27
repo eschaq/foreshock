@@ -105,7 +105,7 @@ export function FleetOverview({ nonce = 0, onSettled }: Props) {
           Fleet Overview
         </h2>
         {summary && (
-          <span className="text-[9px] uppercase tracking-wider text-ink-dim">
+          <span className="text-[9px] uppercase tracking-wider text-ink-muted">
             {aiGenerated
               ? "AI · synthesized from scored fleet state"
               : "deterministic fallback (AI unavailable)"}
@@ -185,7 +185,7 @@ export function FleetOverview({ nonce = 0, onSettled }: Props) {
                   0 unresolved
                 </span>{" "}
                 · all claims sourced
-                <span className="text-ink-dim ml-2 text-[10px]">
+                <span className="text-ink-muted ml-2 text-[10px] hover:underline">
                   (click for breakdown)
                 </span>
               </span>
@@ -193,7 +193,7 @@ export function FleetOverview({ nonce = 0, onSettled }: Props) {
               <span className="text-signal-amber font-medium">
                 ⚠ {trust.unresolved} unresolved citation
                 {trust.unresolved === 1 ? "" : "s"} detected
-                <span className="text-ink-dim ml-2 text-[10px] font-normal">
+                <span className="text-ink-muted ml-2 text-[10px] font-normal hover:underline">
                   (click for breakdown)
                 </span>
               </span>

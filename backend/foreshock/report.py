@@ -769,6 +769,165 @@ def _escape_attr(text: str) -> str:
 # Public entry point
 # ---------------------------------------------------------------------------
 
+def _state_color(state: str):
+    if state == "critical":
+        return C_CRITICAL
+    if state == "warning":
+        return C_WARNING
+    return C_STABLE
+
+
+def _build_cover_page(
+    vendor_details: list[dict],
+    fleet: dict | None,
+    audit: dict,
+    gen_ts: str,
+    styles: dict,
+) -> list:
+    """
+    Cover page for the ICT register: title, scope, fleet briefing,
+    citation audit summary, and a TOC-style vendor index.
+    """
+    flow: list = []
+
+    # Big title
+    flow.append(Paragraph("ICT Third-Party Risk Register", styles["title"]))
+    flow.append(Paragraph(
+        "Continuous business-health monitoring of critical ICT vendors "
+        "(DORA Article 28-aligned)",
+        styles["subtitle"],
+    ))
+    flow.append(Spacer(1, 10))
+
+    # Scope: dates + window
+    capture_dates = [
+        d["overview"].get("latest_capture")
+        for d in vendor_details
+        if d.get("overview", {}).get("latest_capture")
+    ]
+    all_traj_dates: list[str] = []
+    for d in vendor_details:
+        for p in d.get("overview", {}).get("trajectory") or []:
+            if p.get("date"):
+                all_traj_dates.append(p["date"])
+    earliest = min(all_traj_dates) if all_traj_dates else "—"
+    latest = max(capture_dates) if capture_dates else "—"
+
+    flow.append(_kv_table([
+        ["Generated (UTC)", gen_ts],
+        ["Monitoring window", f"{earliest} → {latest}"],
+        ["Vendors in register", str(len(vendor_details))],
+    ]))
+    flow.append(Spacer(1, 12))
+
+    # Fleet summary
+    flow.append(Paragraph("Fleet summary", styles["section_h"]))
+    if fleet and fleet.get("narrative"):
+        flow.append(Paragraph(_para_safe(fleet["headline"] or ""), styles["h2"]))
+        for para in (fleet.get("narrative") or "").split("\n\n"):
+            if para.strip():
+                flow.append(Paragraph(_para_safe(para), styles["body"]))
+        counts = fleet.get("fleet_counts") or {}
+        flow.append(Paragraph(
+            f'<font color="{C_CRITICAL.hexval()}"><b>{counts.get("critical", 0)} critical</b></font>  ·  '
+            f'<font color="{C_WARNING.hexval()}"><b>{counts.get("warning", 0)} warning</b></font>  ·  '
+            f'<font color="{C_STABLE.hexval()}"><b>{counts.get("stable", 0)} stable</b></font>  '
+            f'(total {counts.get("total", 0)})',
+            styles["small"],
+        ))
+    else:
+        flow.append(Paragraph(
+            "<i>Fleet summary unavailable.</i>", styles["small"]
+        ))
+    flow.append(Spacer(1, 10))
+
+    # Citation audit summary
+    flow.append(Paragraph("Citation integrity", styles["section_h"]))
+    pass_marker = f'<font color="{C_STABLE.hexval()}"><b>PASS</b></font>'
+    fail_marker = f'<font color="{C_WARNING.hexval()}"><b>FAIL</b></font>'
+    verdict = pass_marker if audit.get("all_pass") else fail_marker
+    flow.append(Paragraph(
+        f"AI-generated claims: <b>{audit.get('total_claims', 0)}</b>  ·  "
+        f"Sources available: <b>{audit.get('total_citations', 0)}</b>  ·  "
+        f"Unresolved citations: <b>{audit.get('unresolved', 0)}</b>  ·  "
+        f"Audit: {verdict}",
+        styles["body"],
+    ))
+    flow.append(Paragraph(
+        "Every factual claim in the per-vendor AI narratives below carries "
+        "a numbered [N] citation that resolves to a source URL. An automated "
+        "trust-contract audit verifies that no citation is fabricated.",
+        styles["small"],
+    ))
+    flow.append(Spacer(1, 12))
+
+    # Compliance disclaimer — same callout block the single-vendor PDF
+    # opens with. Placed between the trust-signal sections and the TOC
+    # so the reader has full context before scanning the register.
+    flow.extend(_build_disclaimer_callout(styles))
+
+    # TOC-style vendor index (no page numbers — section starts are
+    # predictable from the table order; ReportLab TableOfContents would
+    # require notify() in every section header, which is the kind of
+    # cross-cutting change we don't want in this pass).
+    flow.append(Paragraph("Vendors in this register", styles["section_h"]))
+    header_row = [
+        Paragraph("<b>#</b>", styles["small"]),
+        Paragraph("<b>Vendor</b>", styles["small"]),
+        Paragraph("<b>Type</b>", styles["small"]),
+        Paragraph("<b>State</b>", styles["small"]),
+        Paragraph("<b>Score</b>", styles["small"]),
+        Paragraph("<b>CIK</b>", styles["small"]),
+    ]
+    rows: list[list] = [header_row]
+    for i, d in enumerate(vendor_details, start=1):
+        ov = d.get("overview") or {}
+        state = (ov.get("state") or "—").upper()
+        state_color = _state_color(ov.get("state") or "")
+        rows.append([
+            Paragraph(str(i), styles["small"]),
+            Paragraph(_para_safe(ov.get("name") or "—"), styles["body_tight"]),
+            Paragraph(_para_safe(ov.get("type") or "—"), styles["small"]),
+            Paragraph(
+                f'<font color="{state_color.hexval()}"><b>{state}</b></font>',
+                styles["small"],
+            ),
+            Paragraph(f"{ov.get('score', 0):.1f}", styles["mono_data"]),
+            Paragraph(_para_safe(ov.get("cik") or "—"), styles["mono"]),
+        ])
+    toc = Table(rows, colWidths=[
+        0.3 * inch, 1.7 * inch, 1.3 * inch,
+        0.9 * inch, 0.7 * inch, 1.1 * inch,
+    ])
+    toc.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, C_INK_MUTED),
+        ("LINEBELOW", (0, 1), (-1, -1), 0.25, C_RULE),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    flow.append(toc)
+    return flow
+
+
+def _build_single_vendor_section(detail: dict, styles: dict, gen_ts: str) -> list:
+    """All flowables for one vendor (no disclaimer, no methodology).
+    Shared between the single-vendor PDF and the multi-vendor ICT
+    register so the per-vendor content stays consistent.
+    """
+    flow: list = []
+    flow.extend(_build_title_block(detail, styles, gen_ts))
+    flow.extend(_build_section_identification(detail, styles, gen_ts))
+    flow.extend(_build_section_posture(detail, styles))
+    flow.extend(_build_section_components(detail, styles))
+    flow.extend(_build_section_convergence(detail, styles))
+    flow.extend(_build_section_narrative(detail, styles))
+    flow.extend(_build_section_sources(detail, styles))
+    return flow
+
+
 def build_vendor_report_pdf(vendor_name: str) -> bytes:
     """Generate the DORA-evidence-style PDF for one vendor. Returns bytes."""
     detail = vendor_detail(vendor_name)
@@ -785,13 +944,7 @@ def build_vendor_report_pdf(vendor_name: str) -> bytes:
 
     story: list = []
     story.extend(_build_disclaimer_callout(styles))
-    story.extend(_build_title_block(detail, styles, gen_ts))
-    story.extend(_build_section_identification(detail, styles, gen_ts))
-    story.extend(_build_section_posture(detail, styles))
-    story.extend(_build_section_components(detail, styles))
-    story.extend(_build_section_convergence(detail, styles))
-    story.extend(_build_section_narrative(detail, styles))
-    story.extend(_build_section_sources(detail, styles))
+    story.extend(_build_single_vendor_section(detail, styles, gen_ts))
     story.extend(_build_methodology(styles))
 
     buf = io.BytesIO()
@@ -820,6 +973,115 @@ def build_vendor_report_pdf(vendor_name: str) -> bytes:
     def chrome_with_audit(canvas, doc):
         _draw_chrome(canvas, doc, audit=audit_for_footer)
 
+    doc.addPageTemplates([PageTemplate(
+        id="all",
+        frames=[frame],
+        onPage=chrome_with_audit,
+    )])
+    doc.build(story)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Multi-vendor ICT register PDF (Wave 7)
+# ---------------------------------------------------------------------------
+
+def build_ict_register_pdf(vendor_names: list[str] | None = None) -> bytes:
+    """
+    Generate the full ICT Third-Party Register as a single PDF covering
+    every monitored vendor.
+
+    Structure:
+        Cover page          (title, scope, fleet briefing, audit, vendor TOC)
+        Per-vendor section  (one per vendor, separated by PageBreak)
+        Methodology         (once, at the end)
+
+    Reuses `_build_single_vendor_section` so per-vendor content stays
+    identical to `build_vendor_report_pdf` — no drift between formats.
+    The page footer carries the FLEET aggregate audit (one consistent
+    verdict for the whole register).
+    """
+    # Lazy imports avoid a circular dep — api.py imports from this module.
+    from .api import (
+        get_dashboard_vendors,
+        fleet_summary_payload,
+        trust_audit_payload,
+        vendor_detail,
+    )
+
+    if vendor_names is None:
+        vendor_names = [v["name"] for v in get_dashboard_vendors()]
+    if not vendor_names:
+        raise ValueError("no vendors to render")
+
+    # Pull each vendor's full detail (cached path; cold misses trigger
+    # Claude generation just like a dashboard load).
+    vendor_details: list[dict] = []
+    for name in vendor_names:
+        d = vendor_detail(name)
+        if "error" not in d:
+            vendor_details.append(d)
+    if not vendor_details:
+        raise ValueError("no vendor detail could be loaded")
+
+    fleet = None
+    try:
+        fleet = fleet_summary_payload()
+    except Exception:
+        fleet = None
+    try:
+        audit = trust_audit_payload()
+    except Exception:
+        audit = {
+            "total_claims": 0, "total_citations": 0, "unresolved": 0,
+            "all_pass": True, "vendor_audits": [],
+        }
+
+    styles = _make_styles()
+    gen_ts = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+    story: list = []
+    story.extend(_build_cover_page(vendor_details, fleet, audit, gen_ts, styles))
+    for detail in vendor_details:
+        story.append(PageBreak())
+        story.extend(_build_single_vendor_section(detail, styles, gen_ts))
+    story.append(PageBreak())
+    story.extend(_build_methodology(styles))
+
+    # Footer carries the fleet-wide audit verdict — one consistent
+    # trust signal across the whole register.
+    aggregate_audit_footer = {
+        "cited": [1] * (audit.get("total_claims") or 0),
+        "available": [1] * (audit.get("total_citations") or 0),
+        "invalid": [1] * (audit.get("unresolved") or 0),
+        "all_claims_sourced": bool(audit.get("all_pass", True)),
+    }
+
+    def chrome_with_audit(canvas, doc):
+        _draw_chrome(canvas, doc, audit=aggregate_audit_footer)
+
+    buf = io.BytesIO()
+    doc = BaseDocTemplate(
+        buf,
+        pagesize=LETTER,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch,
+        topMargin=0.75 * inch,
+        bottomMargin=0.85 * inch,
+        title="Foreshock ICT Third-Party Register",
+        author="Foreshock",
+        subject="DORA Article 28 — ICT third-party risk register",
+    )
+    frame = Frame(
+        doc.leftMargin, doc.bottomMargin,
+        doc.width, doc.height,
+        showBoundary=0,
+    )
     doc.addPageTemplates([PageTemplate(
         id="all",
         frames=[frame],

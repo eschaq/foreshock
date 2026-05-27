@@ -57,7 +57,7 @@ export function ConcentrationRisk({ vendors, onSelect }: Props) {
         <h2 className="text-ink-muted text-[10px] uppercase tracking-wider">
           Concentration Risk
         </h2>
-        <span className="text-[9px] uppercase tracking-wider text-ink-dim">
+        <span className="text-[9px] uppercase tracking-wider text-ink-muted">
           vendor risk states over monitoring window
         </span>
       </div>

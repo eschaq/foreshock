@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -o /tmp/ict_register_v2.pdf -w \"HTTP %{http_code}, size %{size_download} bytes, time %{time_total}s\\\\n\" \"http://127.0.0.1:8000/export/ict-register\")"
+    ]
+  }
+}

@@ -24,7 +24,7 @@ from foreshock.live_pull import (
     reset_live_pull_rows,
     stream_live_pull,
 )
-from foreshock.report import build_vendor_report_pdf
+from foreshock.report import build_ict_register_pdf, build_vendor_report_pdf
 
 app = FastAPI(title="Foreshock API")
 
@@ -142,6 +142,33 @@ def vendor_report_pdf(name: str):
     safe_name = name.replace(" ", "_").replace("/", "_")
     from datetime import date as _d
     filename = f"foreshock_{safe_name}_{_d.today().isoformat()}.pdf"
+    return StreamingResponse(
+        iter([pdf]),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@app.get("/export/ict-register")
+def export_ict_register():
+    """One-document ICT register covering every monitored vendor.
+
+    Cover page (title, scope, fleet summary, citation audit, vendor TOC)
+    + per-vendor sections (reuses the single-vendor template, page break
+    between vendors) + shared methodology appendix at the end. The
+    page-footer carries the FLEET-wide audit verdict.
+
+    DORA Article 28-aligned format. Slower than the single-vendor PDF —
+    fetches detail for every vendor (cached when warm).
+    """
+    try:
+        pdf = build_ict_register_pdf()
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    from datetime import date as _d
+    filename = f"foreshock_ict_register_{_d.today().isoformat()}.pdf"
     return StreamingResponse(
         iter([pdf]),
         media_type="application/pdf",
