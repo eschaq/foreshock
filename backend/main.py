@@ -1,10 +1,11 @@
 import asyncio
 import json
 import uuid
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from foreshock.api import (
@@ -35,13 +36,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# All backend routes live under /api so the React app can be served from the
+# same origin (StaticFiles at /) without colliding with API paths.
+router = APIRouter(prefix="/api")
 
-@app.get("/")
+
+@router.get("/health")
 def health():
     return {"status": "foreshock api up"}
 
 
-@app.get("/vendors")
+@router.get("/vendors")
 def vendors():
     """Dashboard grid: system + active user-added vendors with score, state,
     sparkline trajectory, is_removable flag."""
@@ -52,7 +57,7 @@ def vendors():
 # /vendors/lookup MUST come before /vendors/{name} so FastAPI doesn't
 # treat "lookup" as a vendor name.
 
-@app.get("/vendors/lookup")
+@router.get("/vendors/lookup")
 def vendor_lookup(name: str = "", top_n: int = 3):
     """Live CIK + ticker lookup against SEC's public-company universe.
     Returns up to 3 fuzzy matches with confidence score. Empty list for
@@ -68,7 +73,7 @@ class AddVendorRequest(BaseModel):
     website: str | None = None
 
 
-@app.post("/vendors")
+@router.post("/vendors")
 def add_vendor(req: AddVendorRequest):
     """Add a vendor to the monitored list. Persists to `vendor_config` in
     Airtable. Vendor appears on dashboard immediately at STABLE; signals
@@ -90,7 +95,7 @@ def add_vendor(req: AddVendorRequest):
         raise HTTPException(status_code=400, detail=msg)
 
 
-@app.delete("/vendors/{name}")
+@router.delete("/vendors/{name}")
 def remove_vendor(name: str):
     """Soft-delete a user-added vendor (sets is_active=false). Signal
     history in the `signals` table is preserved. System vendors cannot
@@ -104,7 +109,7 @@ def remove_vendor(name: str):
         raise HTTPException(status_code=400, detail=msg)
 
 
-@app.get("/vendors/{name}")
+@router.get("/vendors/{name}")
 def vendor(name: str, refresh: bool = False):
     """Detail panel: full payload incl AI summary + cited sources."""
     detail = vendor_detail(name, force_refresh=refresh)
@@ -113,18 +118,18 @@ def vendor(name: str, refresh: bool = False):
     return detail
 
 
-@app.get("/fleet/summary")
+@router.get("/fleet/summary")
 def fleet_summary(refresh: bool = False):
     """Dashboard fleet-overview card: 3-4 sentence portfolio briefing."""
     return fleet_summary_payload(force_refresh=refresh)
 
 
-@app.post("/cache/summaries/clear")
+@router.post("/cache/summaries/clear")
 def clear_cache():
     return {"cleared": clear_summary_cache()}
 
 
-@app.get("/trust/audit")
+@router.get("/trust/audit")
 def trust_audit():
     """Fleet-wide citation audit. Powers the dashboard trust indicator.
     Returns 0 unresolved when every AI claim resolves to a numbered
@@ -132,7 +137,7 @@ def trust_audit():
     return trust_audit_payload()
 
 
-@app.get("/vendors/{name}/report.pdf")
+@router.get("/vendors/{name}/report.pdf")
 def vendor_report_pdf(name: str):
     """One-click DORA evidence-artifact export. Returns a real PDF."""
     try:
@@ -151,7 +156,7 @@ def vendor_report_pdf(name: str):
     )
 
 
-@app.get("/export/ict-register")
+@router.get("/export/ict-register")
 def export_ict_register():
     """One-document ICT register covering every monitored vendor.
 
@@ -178,7 +183,7 @@ def export_ict_register():
     )
 
 
-@app.get("/status")
+@router.get("/status")
 def status():
     """Subtle activity-indicator data. Always-on monitoring claim."""
     vendors = all_vendors_overview()
@@ -196,7 +201,7 @@ def status():
     }
 
 
-@app.get("/live-pull/stream")
+@router.get("/live-pull/stream")
 async def live_pull_stream(mode: str = "live", save_seed: bool = False):
     """
     SSE stream of the live pull. The honesty boundary:
@@ -228,7 +233,7 @@ async def live_pull_stream(mode: str = "live", save_seed: bool = False):
     )
 
 
-@app.post("/live-pull/reset")
+@router.post("/live-pull/reset")
 def live_pull_reset():
     """Delete every row tagged `live-pull-beat:`. For rehearsal cycles."""
     return {"deleted": reset_live_pull_rows()}
@@ -243,7 +248,7 @@ def live_pull_reset():
 _agent_jobs: dict[str, dict] = {}
 
 
-@app.post("/agent/run")
+@router.post("/agent/run")
 async def agent_run():
     """
     Kick off a Pull → Clean → Promote run async. Returns the job_id
@@ -272,7 +277,7 @@ async def agent_run():
     return {"job_id": job_id}
 
 
-@app.get("/agent/stream/{job_id}")
+@router.get("/agent/stream/{job_id}")
 async def agent_stream(job_id: str):
     """SSE stream of per-step events for a previously-started agent job."""
     job = _agent_jobs.get(job_id)
@@ -309,3 +314,24 @@ async def agent_stream(job_id: str):
             "Connection": "keep-alive",
         },
     )
+
+
+app.include_router(router)
+
+
+# ---------------------------------------------------------------------------
+# Frontend: serve the built React app from /. The catch-all runs after all
+# /api/* routes; it returns real asset files when they exist on disk and
+# falls back to index.html otherwise so client-side routes survive
+# hard-refreshes.
+# ---------------------------------------------------------------------------
+
+DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str):
+    candidate = DIST_DIR / full_path
+    if full_path and candidate.is_file():
+        return FileResponse(candidate)
+    return FileResponse(DIST_DIR / "index.html")
