@@ -16,7 +16,7 @@ Foreshock is a continuous vendor-risk monitoring web app for fintech compliance 
 
 ## 1. Product
 
-- **Name:** foreshock (lowercase wordmark). Tagline: "Foreshock felt it." Positioning: every vendor failure has foreshocks; we catch them.
+- **Name:** foreshock (lowercase wordmark). Tagline: "Foreshock feels it." Positioning: every vendor failure has foreshocks; we catch them.
 - **What it does:** continuous monitoring of vendor BUSINESS-HEALTH signals (layoffs, leadership exits, lawsuits, sentiment, funding distress) — the leading indicators that precede vendor failure, from locked public sources, scored and alerted in near-real-time.
 - **Audience:** the GRC lead at a mid-market fintech ($50M-$2B rev) managing DORA compliance for a stack of critical ICT vendors, often a one-person compliance team.
 - **The gap it fills:** GRC platforms (OneTrust, Prevalent, ProcessUnity) watch paperwork/registers; security raters (BitSight, SecurityScorecard) watch the attack surface. NEITHER watches real-time business-health signals. That's Foreshock's lane — and it's the one corner of TPRM where stale data defeats the purpose, which is exactly the hackathon theme.
@@ -87,7 +87,7 @@ Real captured/current data on 5 real vendors + staged history on 1 fictional ven
 2. **Live pull (30-45s, money shot):** fast Bright Data MCP call. First pulls fresh real signals on real vendors (appended — proves it works on real companies). Then lands Veridian's fresh beat (lawsuit + 2nd exec exit). Type 2 rows write with fresh timestamps. Narration draws the real-vs-demo line.
 3. **Diff + alert (20s):** CDC diff; Veridian's converging signals (now 5) cross threshold; alert fires; UI refreshes red.
 4. **AI summary (30s):** Claude runs LIVE on the real diff, narrates the convergence with sourced citations. Not hardcoded. ~3-5s.
-5. **Close (15s):** platform vision (same engine → competitors, suppliers, M&A targets) + "Foreshock felt it."
+5. **Close (15s):** platform vision (same engine → competitors, suppliers, M&A targets) + "Foreshock feels it."
 
 **Real vs fictional split (state it explicitly in narration — it's a strength):** "These five are real vendors we're monitoring live. Veridian is a demo company so we can show the full alert cascade honestly, without inventing a crisis for a real business."
 
@@ -124,7 +124,7 @@ Get acts 1-5 (a working end-to-end pull→diff→alert→summary) proven by mid-
 
 ## 8. Brand (for the reskin pass)
 
-- **Wordmark:** lowercase "foreshock". **Tagline:** "Foreshock felt it."
+- **Wordmark:** lowercase "foreshock". **Tagline:** "Foreshock feels it."
 - **Palette (functional — encodes risk state):** Base `#0A0C12` / Surface `#161B2B` / Signal Blue `#3B82F6` (calm/healthy/brand) / Teal `#3FB8AF` (stable) / Signal Amber `#FFAA33` (warning/alert) / Critical Red `#FF5247` (threshold crossed). Text `#EEF1F8` / `#9AA3B8` / `#5A6178`.
 - **Risk-state logic:** blue/teal = stable → amber = foreshock detected → red = critical. The dashboard color shifts ARE the risk signaling.
 - **Motif:** seismograph. Logo = needle with a spike. Sparklines read as seismograph traces.

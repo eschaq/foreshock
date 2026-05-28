@@ -1096,7 +1096,7 @@ Header → **Export ICT Register (PDF)**.
 
 > "One click. All vendors. Cover page with the fleet view, the citation audit, the disclaimer. Per-vendor sections, methodology appendix. This is the DORA Article 28 ICT register your GRC lead would file. Nobody else ships this."
 
-> "Foreshock felt it."
+> "Foreshock feels it."
 
 ---
 
@@ -1289,7 +1289,7 @@ See §18.2 for component map.
 ## Appendix A — Brand
 
 - **Wordmark:** lowercase `foreshock`
-- **Tagline:** "Foreshock felt it."
+- **Tagline:** "Foreshock feels it."
 - **Motif:** seismograph (sparklines read as seismic traces)
 - **Typography:** General Sans (body) + Sometype Mono (numerics, citations, SSE event logs)
 - **Voice:** calibrated, charged (only at earned moments), restrained (95% calm dark canvas)
